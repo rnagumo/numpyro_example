@@ -1,4 +1,4 @@
-FROM python:3.9-buster
+FROM python:3.8-buster
 
 RUN pip install --no-cache --upgrade pip
 RUN pip install --no-cache poetry
