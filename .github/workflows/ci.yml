@@ -30,5 +30,3 @@ jobs:
         run: poetry run isort . --check --diff
       - name: black
         run: poetry run black . --check --diff
-      - name: pytest
-        run: poetry run pytest
