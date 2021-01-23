@@ -1,6 +1,5 @@
 from typing import Optional
 
-import jax
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
@@ -27,8 +26,8 @@ def model_noncentered(num: int, sigma: np.ndarray, y: Optional[np.ndarray] = Non
             theta = numpyro.sample(
                 "theta",
                 dist.TransformedDistribution(
-                    dist.Normal(0., 1.), dist.transforms.AffineTransform(mu, tau)
-                )
+                    dist.Normal(0.0, 1.0), dist.transforms.AffineTransform(mu, tau)
+                ),
             )
 
         numpyro.sample("obs", dist.Normal(theta, sigma), obs=y)
