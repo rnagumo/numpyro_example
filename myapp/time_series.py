@@ -104,7 +104,9 @@ def main() -> None:
     numpyro.set_host_device_count(4)
 
     df = load_dataset()
-    y_train = jnp.array(df.loc[:80, "value"], dtype=jnp.float32)
+    test_index = 80
+    test_len = len(df) - test_index
+    y_train = jnp.array(df.loc[:test_index, "value"], dtype=jnp.float32)
 
     # Inference
     kernel = NUTS(sgt)
@@ -115,10 +117,10 @@ def main() -> None:
 
     # Prediction
     predictive = Predictive(sgt, samples, return_sites=["y_forecast"])
-    prediction_sample = predictive(random.PRNGKey(1), y_train, seasonality=38, future=34)
+    prediction_sample = predictive(random.PRNGKey(1), y_train, seasonality=38, future=test_len)
     forecast_marginal = prediction_sample["y_forecast"]
 
-    plot_results(df["time"].values, df["value"].values, forecast_marginal, test_index=80)
+    plot_results(df["time"].values, df["value"].values, forecast_marginal, test_index=test_index)
 
 
 if __name__ == "__main__":
