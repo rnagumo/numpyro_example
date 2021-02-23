@@ -3,11 +3,11 @@ from typing import Callable, Optional
 
 import jax.numpy as jnp
 import jax.random as random
+import numpy as np
 import numpyro
 import numpyro.distributions as dist
-from jax.scipy.special import logsumexp
 from numpyro.examples.datasets import BASEBALL, load_dataset
-from numpyro.infer import HMC, MCMC, NUTS, SA, Predictive, log_likelihood
+from numpyro.infer import HMC, MCMC, NUTS, SA, Predictive
 
 
 def fully_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> jnp.ndarray:
@@ -75,14 +75,36 @@ def run_inference(
 
 
 def predict(
-    model: Callable, at_bats: jnp.ndarray, posterior_samples: jnp.ndarray, rng_key: jnp.ndarray,
+    model: Callable,
+    at_bats: jnp.ndarray,
+    posterior_samples: jnp.ndarray,
+    rng_key: jnp.ndarray,
 ) -> jnp.ndarray:
 
     predictive = Predictive(model, posterior_samples=posterior_samples)
     predictive_samples = predictive(rng_key, at_bats)
     predictions = predictive_samples["obs"]
 
-    return predictions    
+    return predictions
+
+
+def print_results(
+    model_name: str,
+    predictions: jnp.ndarray,
+    at_bats: jnp.ndarray,
+    hits: jnp.ndarray,
+    player_names: np.ndarray,
+    is_train: bool,
+) -> None:
+
+    header = model_name + (" - train" if is_train else " - test")
+    quantiles = jnp.quantile(predictions, jnp.array([0.25, 0.5, 0.75]), axis=0)
+    print("\n", header, "\n")
+    for i, p in enumerate(player_names):
+        print(
+            f"{p}: {at_bats[i]}, {hits[i]}, {quantiles[0, i]:.2f}, {quantiles[1, i]:.2f}, "
+            f"{quantiles[2, i]:.2f}"
+        )
 
 
 def main(args: argparse.Namespace) -> None:
@@ -105,14 +127,20 @@ def main(args: argparse.Namespace) -> None:
     for i, model in enumerate(model_list, 1):
         rng_key, rng_key_predict = random.split(random.PRNGKey(i))
         zs = run_inference(
-            model, at_bats, hits, rng_key, num_warmup=args.num_warmup,
-            num_samples=args.num_samples, num_chains=args.num_chains, algo_name=args.algo_name,
+            model,
+            at_bats,
+            hits,
+            rng_key,
+            num_warmup=args.num_warmup,
+            num_samples=args.num_samples,
+            num_chains=args.num_chains,
+            algo_name=args.algo_name,
         )
         predictions = predict(model, at_bats, zs, rng_key_predict)
-
-        print(model.__name__)
-        print(hits)
-        print(predictions)
+        print_results(model.__name__, predictions, at_bats, hits, player_names, is_train=True)
+        print_results(
+            model.__name__, predictions, at_bats_test, hist_test, player_names, is_train=False
+        )
 
 
 if __name__ == "__main__":
