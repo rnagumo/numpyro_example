@@ -87,7 +87,7 @@ def plot_results(
 
     y_pred = jnp.mean(forecast_marginal, axis=0)
     smape = jnp.mean(jnp.abs(y_pred - y_test) / (y_pred + y_test)) * 200
-    msqrt = jnp.sqrt(jnp.mean(y_pred - y_test) ** 2)
+    msqrt = jnp.sqrt(jnp.mean((y_pred - y_test) ** 2))
     hpd_low, hpd_high = hpdi(forecast_marginal)
 
     plt.figure(figsize=(8, 4))
