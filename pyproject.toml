@@ -8,6 +8,7 @@ license = "MIT"
 [tool.poetry.dependencies]
 python = "^3.8"
 numpyro = "^0.5.0"
+pandas = "^1.2.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.2"
