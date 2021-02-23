@@ -74,7 +74,7 @@ def log_likelihood(
 
 
 def log_pred_density(
-    rng_key: np.ndarray, params: np.ndarray, model: Callable, *args: Any, **kwargs: Any
+    rng_key: np.ndarray, params: jnp.ndarray, model: Callable, *args: Any, **kwargs: Any
 ) -> np.ndarray:
 
     n = list(params.values())[0].shape[0]
