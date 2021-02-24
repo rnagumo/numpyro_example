@@ -39,7 +39,7 @@ def simulate_data(
         rng_key_emission, sample_shape=(num_categories,)
     )
 
-    start_prob = jnp.repeat(1. / num_categories, num_categories)
+    start_prob = jnp.repeat(1.0 / num_categories, num_categories)
     category = 0
     categories = []
     words = []
@@ -92,11 +92,10 @@ def forward_log_prob(
     transition_log_prob: jnp.ndarray,
     emission_log_prob: jnp.ndarray,
 ) -> jnp.ndarray:
-
     def scan_fn(log_prob: jnp.ndarray, word: int) -> Tuple[jnp.ndarray, jnp.ndarray]:
         return (
             forward_one_step(log_prob, word, transition_log_prob, emission_log_prob),
-            jnp.zeros((0,))
+            jnp.zeros((0,)),
         )
 
     log_prob, _ = lax.scan(scan_fn, init_log_prob, words)
@@ -208,8 +207,8 @@ def plot_results(
     transition_prob: jnp.ndarray,
 ) -> None:
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(14, 6))
     x = np.linspace(0, 1, 101)
