@@ -42,7 +42,7 @@ def simulate_data(
     categories = []
     words = []
 
-    for t in range(num_supervised, num_unsupservised):
+    for t in range(num_supervised + num_unsupservised):
         rng_key, rng_key_transition, rng_key_emission = random.split(rng_key, 3)
         if t == 0 or t == num_supervised:
             category = dist.Categorical(start_prob).sample(rng_key_transition)
@@ -214,7 +214,7 @@ def plot_results(
             y = gaussian_kde(posterior["transition_prob"][:, i, j])(x)
             title = f"Posterior: trnas_prob[{i},{j}], true value={transition_prob[i, j]:.2f}"
 
-            plt.subplot(3, 3, index + 1)
+            plt.subplot(transition_prob.shape[0], transition_prob.shape[1], index + 1)
             plt.plot(x, y, color=colors[index])
             plt.axvline(transition_prob[i, j], linestyle="--", color=colors[index], alpha=0.6)
             plt.xlabel("Probability")
