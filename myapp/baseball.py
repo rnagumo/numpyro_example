@@ -1,5 +1,5 @@
 import argparse
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 import jax.numpy as jnp
 import jax.random as random
@@ -10,42 +10,40 @@ from numpyro.examples.datasets import BASEBALL, load_dataset
 from numpyro.infer import HMC, MCMC, NUTS, SA, Predictive
 
 
-def fully_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+def fully_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> None:
 
     phi = numpyro.sample("phi", dist.Uniform(0, 1))
     num_players = at_bats.shape[0]
     with numpyro.plate("num_players", num_players):
-        return numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
+        numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
 
 
-def not_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+def not_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> None:
 
     num_players = at_bats.shape[0]
     with numpyro.plate("num_players", num_players):
         phi = numpyro.sample("phi", dist.Uniform(0, 1))
-        return numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
+        numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
 
 
-def partially_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+def partially_pooled(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> None:
 
     m = numpyro.sample("m", dist.Uniform(0, 1))
     kappa = numpyro.sample("kappa", dist.Pareto(1, 1.5))
     num_players = at_bats.shape[0]
     with numpyro.plate("num_players", num_players):
         phi = numpyro.sample("phi", dist.Beta(m * kappa, (1 - m) * kappa))
-        return numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
+        numpyro.sample("obs", dist.Binomial(at_bats, probs=phi), obs=hits)
 
 
-def partially_pooled_with_logit(
-    at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None
-) -> jnp.ndarray:
+def partially_pooled_with_logit(at_bats: jnp.ndarray, hits: Optional[jnp.ndarray] = None) -> None:
 
     loc = numpyro.sample("loc", dist.Normal(-1, 1))
     scale = numpyro.sample("scale", dist.HalfCauchy(1))
     num_players = at_bats.shape[0]
     with numpyro.plate("num_players", num_players):
         alpha = numpyro.sample("alpha", dist.Normal(loc, scale))
-        return numpyro.sample("obs", dist.Binomial(at_bats, logits=alpha), obs=hits)
+        numpyro.sample("obs", dist.Binomial(at_bats, logits=alpha), obs=hits)
 
 
 def run_inference(
@@ -58,7 +56,7 @@ def run_inference(
     num_samples: int = 3000,
     num_chains: int = 1,
     algo_name: str = "NUTS",
-) -> jnp.ndarray:
+) -> Dict[str, jnp.ndarray]:
 
     if algo_name == "NUTS":
         kernel = NUTS(model)
@@ -79,13 +77,10 @@ def predict(
     at_bats: jnp.ndarray,
     posterior_samples: jnp.ndarray,
     rng_key: jnp.ndarray,
-) -> jnp.ndarray:
+) -> Dict[str, jnp.ndarray]:
 
     predictive = Predictive(model, posterior_samples=posterior_samples)
-    predictive_samples = predictive(rng_key, at_bats)
-    predictions = predictive_samples["obs"]
-
-    return predictions
+    return predictive(rng_key, at_bats)
 
 
 def print_results(
@@ -126,7 +121,7 @@ def main(args: argparse.Namespace) -> None:
     model_list = [fully_pooled, not_pooled, partially_pooled, partially_pooled_with_logit]
     for i, model in enumerate(model_list, 1):
         rng_key, rng_key_predict = random.split(random.PRNGKey(i))
-        zs = run_inference(
+        posterior = run_inference(
             model,
             at_bats,
             hits,
@@ -136,7 +131,7 @@ def main(args: argparse.Namespace) -> None:
             num_chains=args.num_chains,
             algo_name=args.algo_name,
         )
-        predictions = predict(model, at_bats, zs, rng_key_predict)
+        predictions = predict(model, at_bats, posterior, rng_key_predict)["obs"]
         print_results(model.__name__, predictions, at_bats, hits, player_names, is_train=True)
         print_results(
             model.__name__, predictions, at_bats_test, hist_test, player_names, is_train=False
