@@ -23,9 +23,7 @@ def simulate_data(
     num_words: int,
     num_supervised: int,
     num_unsupservised: int,
-) -> Tuple[
-    jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray
-]:
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
 
     rng_key, rng_key_transition, rng_key_emission = random.split(rng_key, 3)
 
@@ -64,8 +62,6 @@ def simulate_data(
     unsupervised_words = words[num_supervised:]
 
     return (
-        transition_prior,
-        emission_prior,
         transition_prob,
         emission_prob,
         supervised_categories,
@@ -104,15 +100,15 @@ def forward_log_prob(
 
 
 def semi_supervised_hmm(
-    transition_prior: jnp.ndarray,
-    emission_prior: jnp.ndarray,
+    num_categories: int,
+    num_words: int,
     supervised_categories: jnp.ndarray,
     supervised_words: jnp.ndarray,
     unsupervised_words: jnp.ndarray,
 ) -> None:
 
-    num_categories = transition_prior.shape[0]
-    num_words = emission_prior.shape[0]
+    transition_prior = jnp.ones(num_categories)
+    emission_prior = jnp.repeat(0.1, num_words)
 
     transition_prob = numpyro.sample(
         "transition_prob",
@@ -146,8 +142,8 @@ def semi_supervised_hmm(
 
 def inference(
     model: Callable,
-    transition_prior: jnp.ndarray,
-    emission_prior: jnp.ndarray,
+    num_categories: int,
+    num_words: int,
     supervised_categories: jnp.ndarray,
     supervised_words: jnp.ndarray,
     unsupervised_words: jnp.ndarray,
@@ -163,8 +159,8 @@ def inference(
     mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
     mcmc.run(
         rng_key,
-        transition_prior,
-        emission_prior,
+        num_categories,
+        num_words,
         supervised_categories,
         supervised_words,
         unsupervised_words,
@@ -203,7 +199,7 @@ def print_results(
 
 
 def plot_results(
-    posteriors: Dict[str, jnp.ndarray],
+    posterior: Dict[str, jnp.ndarray],
     transition_prob: jnp.ndarray,
 ) -> None:
 
@@ -215,7 +211,7 @@ def plot_results(
     index = 0
     for i in range(transition_prob.shape[0]):
         for j in range(transition_prob.shape[1]):
-            y = gaussian_kde(posteriors["transition_prob"][:, i, j])(x)
+            y = gaussian_kde(posterior["transition_prob"][:, i, j])(x)
             title = f"Posterior: trnas_prob[{i},{j}], true value={transition_prob[i, j]:.2f}"
 
             plt.subplot(3, 3, index + 1)
@@ -236,8 +232,6 @@ def main(args: argparse.Namespace) -> None:
     numpyro.set_host_device_count(args.num_chains)
 
     (
-        transition_prior,
-        emission_prior,
         transition_prob,
         emission_prob,
         supervised_categories,
@@ -254,8 +248,8 @@ def main(args: argparse.Namespace) -> None:
     rng_key = random.PRNGKey(2)
     posterior = inference(
         semi_supervised_hmm,
-        transition_prior,
-        emission_prior,
+        args.num_categories,
+        args.num_words,
         supervised_categories,
         supervised_words,
         unsupervised_words,
