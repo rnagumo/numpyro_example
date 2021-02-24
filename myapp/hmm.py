@@ -77,7 +77,7 @@ def forward_one_step(
     emission_log_prob: jnp.ndarray,
 ) -> jnp.ndarray:
 
-    log_prob_tmp = jnp.expand_dims(prev_log_prob, axis=1) * transition_log_prob
+    log_prob_tmp = jnp.expand_dims(prev_log_prob, axis=1) + transition_log_prob
     log_prob = log_prob_tmp + emission_log_prob[:, curr_word]
     return logsumexp(log_prob, axis=0)
 
