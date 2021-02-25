@@ -3,12 +3,14 @@
 import pathlib
 from typing import Callable, Dict, Optional, Union
 
+import arviz as az
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax import random
-from numpyro.infer import MCMC, NUTS, Predictive
+from numpyro import infer
 
 
 def model(sigma: np.ndarray, y: Optional[np.ndarray] = None) -> None:
@@ -31,15 +33,17 @@ def inference(
     num_samples: int = 1000,
     num_chains: int = 1,
     verbose: bool = True,
-) -> Dict[str, jnp.ndarray]:
+) -> infer.MCMC:
 
-    kernel = NUTS(model)
-    mcmc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
+    kernel = infer.NUTS(model)
+    mcmc = infer.MCMC(
+        kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains
+    )
     mcmc.run(rng_key, sigma, y)
     if verbose:
         mcmc.print_summary()
 
-    return mcmc.get_samples()
+    return mcmc
 
 
 def predict(
@@ -51,7 +55,9 @@ def predict(
     num_samples: Optional[int] = None,
 ) -> Dict[str, jnp.ndarray]:
 
-    predictive = Predictive(model, posterior_samples=posterior_samples, num_samples=num_samples)
+    predictive = infer.Predictive(
+        model, posterior_samples=posterior_samples, num_samples=num_samples
+    )
 
     return predictive(rng_key, sigma)
 
@@ -78,7 +84,19 @@ if __name__ == "__main__":
     y = np.array([28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0])
     sigma = np.array([15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0])
     rng_key = random.PRNGKey(0)
+    rng_key, rng_key_posterior, rng_key_prior = random.split(rng_key, 3)
 
-    posterior = inference(model, sigma, y, rng_key, num_chains=num_chains)
-    prediction = predict(model, sigma, rng_key, posterior_samples=posterior)
-    print(np.mean(prediction["obs"], axis=0))
+    mcmc = inference(model, sigma, y, rng_key, num_chains=num_chains)
+    posterior_samples = mcmc.get_samples()
+    posterior_predictive = predict(
+        model, sigma, rng_key_posterior, posterior_samples=posterior_samples
+    )
+    prior = predict(model, sigma, rng_key_prior, num_samples=500)
+
+    numpyro_data = az.from_numpyro(
+        mcmc,
+        prior=prior,
+        posterior_predictive=posterior_predictive,
+    )
+    az.plot_trace(numpyro_data)
+    plt.show()
