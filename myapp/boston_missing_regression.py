@@ -1,4 +1,5 @@
-from typing import Dict, Optional, Tuple
+import argparse
+from typing import Dict, List, Optional, Tuple
 
 import arviz as az
 import jax.numpy as jnp
@@ -74,11 +75,14 @@ def _impute_missing_values(
 
 
 def _save_results(
-    y: np.ndarray,
     mcmc: infer.MCMC,
+    y: Optional[np.ndarray] = None,
     prior: Optional[Dict[str, jnp.ndarray]] = None,
     posterior_samples: Optional[Dict[str, jnp.ndarray]] = None,
     posterior_predictive: Optional[Dict[str, jnp.ndarray]] = None,
+    *,
+    suffix: str = "",
+    var_names: Optional[List[str]] = None,
 ) -> None:
 
     jnp.savez("./data/missing_boston_posterior.npz", **posterior_samples)
@@ -90,14 +94,12 @@ def _save_results(
         posterior_predictive=posterior_predictive,
     )
 
-    az.plot_trace(numpyro_data)
-    plt.savefig("./data/missing_boston_trace.png")
+    az.plot_trace(numpyro_data, var_names=var_names)
+    plt.savefig(f"./data/missing_boston_trace_{suffix}.png")
     plt.close()
 
-    az.plot_ppc(numpyro_data)
-    plt.legend(loc="upper right")
-    plt.savefig("./data/missing_boston_ppc.png")
-    plt.close()
+    if y is None:
+        return
 
     # Prediction
     y_pred = posterior_predictive["y"]
@@ -112,53 +114,68 @@ def _save_results(
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
-    plt.savefig("./data/missing_boston_prediction.png")
+    plt.savefig(f"./data/missing_boston_prediction_{suffix}.png")
     plt.close()
 
 
-def main() -> None:
+def main(args: argparse.Namespace) -> None:
 
     x, y, x_missing = _load_dataset()
     batch, x_dim = x.shape
 
-    num_chains = 1
     numpyro.set_platform("cpu")
-    numpyro.set_host_device_count(num_chains)
+    numpyro.set_host_device_count(args.num_chains)
     rng_key = random.PRNGKey(0)
 
     # PCA
     rng_key, rng_key_pca, rng_key_pca_pred = random.split(rng_key, 3)
     kernel = infer.NUTS(pca_with_missing)
-    mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
+    mcmc = infer.MCMC(
+        kernel, num_warmup=args.num_warmup, num_samples=args.num_samples,
+        num_chains=args.num_chains
+    )
     mcmc.run(rng_key_pca, x)
     posterior_samples_pca = mcmc.get_samples()
 
     predictive = infer.Predictive(pca_with_missing, posterior_samples=posterior_samples_pca)
     posterior_predictive_pca = predictive(rng_key_pca_pred, batch=batch, x_dim=x_dim)
 
+    rng_key, rng_key_impute = random.split(rng_key, 2)
+    posterior_predictive_pca = _impute_missing_values(
+        posterior_samples_pca, posterior_predictive_pca, rng_key_impute
+    )
+
+    _save_results(
+        mcmc, None, None, posterior_samples_pca, posterior_predictive_pca,
+        var_names=["phi", "eta"], suffix="pca",
+    )
+
     # Linear regression
     rng_key, rng_key_lr, rng_key_lr_pred = random.split(rng_key, 3)
     z = posterior_samples_pca["z"].mean(axis=0)
 
     kernel = infer.NUTS(latent_regression)
-    mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
-    mcmc.run(rng_key_lr, z, y)
-    posterior_samples = mcmc.get_samples()
-
-    predictive = infer.Predictive(latent_regression, posterior_samples=posterior_samples)
-    posterior_predictive = predictive(rng_key_lr_pred, z)
-
-    # Post-process
-    posterior_samples.update(posterior_samples_pca)
-    posterior_predictive.update(posterior_predictive_pca)
-
-    rng_key, rng_key_impute = random.split(rng_key, 2)
-    posterior_predictive = _impute_missing_values(
-        posterior_samples, posterior_predictive, rng_key_impute
+    mcmc = infer.MCMC(
+        kernel, num_warmup=args.num_warmup, num_samples=args.num_samples,
+        num_chains=args.num_chains
     )
+    mcmc.run(rng_key_lr, z, y)
+    posterior_samples_lr = mcmc.get_samples()
 
-    _save_results(y, mcmc, None, posterior_samples, posterior_predictive)
+    predictive = infer.Predictive(latent_regression, posterior_samples=posterior_samples_lr)
+    posterior_predictive_lr = predictive(rng_key_lr_pred, z)
+
+    _save_results(
+        mcmc, y, None, posterior_samples_lr, posterior_predictive_lr, suffix="linear"
+    )
 
 
 if __name__ == "__main__":
-    main()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num-warmup", type=int, default=100)
+    parser.add_argument("--num-samples", type=int, default=100)
+    parser.add_argument("--num-chains", type=int, default=1)
+    args = parser.parse_args()
+
+    main(args)
