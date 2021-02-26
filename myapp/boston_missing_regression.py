@@ -11,12 +11,8 @@ from numpyro import diagnostics, infer
 from sklearn.datasets import load_boston
 
 
-def bayesian_pca_regression(
-    x: Optional[np.ndarray] = None,
-    y: Optional[np.ndarray] = None,
-    batch: int = 100,
-    x_dim: int = 100,
-    z_dim: int = 5,
+def pca_with_missing(
+    x: Optional[np.ndarray] = None, batch: int = 100, x_dim: int = 50, z_dim: int = 5
 ) -> None:
 
     if x is not None:
@@ -24,11 +20,15 @@ def bayesian_pca_regression(
 
     phi = numpyro.sample("phi", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
     eta = numpyro.sample("eta", dist.Normal(jnp.zeros(x_dim), jnp.ones(x_dim)))
-    theta = numpyro.sample("theta", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
-    sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
-
     z = numpyro.sample("z", dist.Normal(jnp.zeros((batch, z_dim)), jnp.ones((batch, z_dim))))
     numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, jnp.ones(x_dim)), obs=x)
+
+
+def latent_regression(z: np.ndarray, y: Optional[np.ndarray] = None) -> None:
+
+    z_dim = z.shape[-1]
+    theta = numpyro.sample("theta", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
+    sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
     numpyro.sample("y", dist.Normal(jnp.matmul(z, theta), sigma), obs=y)
 
 
@@ -76,9 +76,9 @@ def _impute_missing_values(
 def _save_results(
     y: np.ndarray,
     mcmc: infer.MCMC,
-    prior: Dict[str, jnp.ndarray],
-    posterior_samples: Dict[str, jnp.ndarray],
-    posterior_predictive: Dict[str, jnp.ndarray],
+    prior: Optional[Dict[str, jnp.ndarray]] = None,
+    posterior_samples: Optional[Dict[str, jnp.ndarray]] = None,
+    posterior_predictive: Optional[Dict[str, jnp.ndarray]] = None,
 ) -> None:
 
     jnp.savez("./data/missing_boston_posterior.npz", **posterior_samples)
@@ -119,34 +119,45 @@ def _save_results(
 def main() -> None:
 
     x, y, x_missing = _load_dataset()
-    batch, x_dim = x_missing.shape
+    batch, x_dim = x.shape
 
     num_chains = 1
     numpyro.set_platform("cpu")
     numpyro.set_host_device_count(num_chains)
-
     rng_key = random.PRNGKey(0)
-    rng_key, rng_key_posterior, rng_key_prior, rng_key_impute = random.split(rng_key, 4)
 
-    # Sample prior
-    predictive = infer.Predictive(bayesian_pca_regression, num_samples=500)
-    prior = predictive(rng_key_prior, batch=batch, x_dim=x_dim)
-
-    # Infer posterior
-    kernel = infer.NUTS(bayesian_pca_regression)
+    # PCA
+    rng_key, rng_key_pca, rng_key_pca_pred = random.split(rng_key, 3)
+    kernel = infer.NUTS(pca_with_missing)
     mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
-    mcmc.run(rng_key, x, y)
+    mcmc.run(rng_key_pca, x)
+    posterior_samples_pca = mcmc.get_samples()
+
+    predictive = infer.Predictive(pca_with_missing, posterior_samples=posterior_samples_pca)
+    posterior_predictive_pca = predictive(rng_key_pca_pred, batch=batch, x_dim=x_dim)
+
+    # Linear regression
+    rng_key, rng_key_lr, rng_key_lr_pred = random.split(rng_key, 3)
+    z = posterior_samples_pca["z"].mean(axis=0)
+
+    kernel = infer.NUTS(latent_regression)
+    mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
+    mcmc.run(rng_key_lr, z, y)
     posterior_samples = mcmc.get_samples()
 
-    # Sample posterior predictive
-    predictive = infer.Predictive(bayesian_pca_regression, posterior_samples=posterior_samples)
-    posterior_predictive = predictive(rng_key_posterior, x)
+    predictive = infer.Predictive(latent_regression, posterior_samples=posterior_samples)
+    posterior_predictive = predictive(rng_key_lr_pred, z)
 
+    # Post-process
+    posterior_samples.update(posterior_samples_pca)
+    posterior_predictive.update(posterior_predictive_pca)
+
+    rng_key, rng_key_impute = random.split(rng_key, 2)
     posterior_predictive = _impute_missing_values(
         posterior_samples, posterior_predictive, rng_key_impute
     )
 
-    _save_results(y, mcmc, prior, posterior_samples, posterior_predictive)
+    _save_results(y, mcmc, None, posterior_samples, posterior_predictive)
 
 
 if __name__ == "__main__":
