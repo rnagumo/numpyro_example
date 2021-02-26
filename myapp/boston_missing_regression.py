@@ -21,8 +21,9 @@ def pca_with_missing(
 
     phi = numpyro.sample("phi", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
     eta = numpyro.sample("eta", dist.Normal(jnp.zeros(x_dim), jnp.ones(x_dim)))
-    z = numpyro.sample("z", dist.Normal(jnp.zeros((batch, z_dim)), jnp.ones((batch, z_dim))))
-    numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, jnp.ones(x_dim)), obs=x)
+    with numpyro.plate("batch", batch, dim=-2):
+        z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
+        numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, jnp.ones(x_dim)), obs=x)
 
 
 def latent_regression(z: np.ndarray, y: Optional[np.ndarray] = None) -> None:
