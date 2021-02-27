@@ -1,5 +1,6 @@
 """Boston hous pricing regression with missing features."""
 
+import pathlib
 from typing import Dict, Optional, Tuple
 
 import arviz as az
@@ -45,19 +46,22 @@ def _save_results(
     posterior_predictive: Dict[str, jnp.ndarray],
 ) -> None:
 
+    root = pathlib.Path("./data/boston_reg")
+    root.mkdir(exist_ok=True)
+
     numpyro_data = az.from_numpyro(
         mcmc,
         prior=prior,
         posterior_predictive=posterior_predictive,
     )
 
-    az.plot_trace(numpyro_data)
-    plt.savefig("./data/boston_trace.png")
+    az.plot_trace(numpyro_data, var_names=("theta", "sigma"))
+    plt.savefig(root / "boston_trace.png")
     plt.close()
 
     az.plot_ppc(numpyro_data)
     plt.legend(loc="upper right")
-    plt.savefig("./data/boston_ppc.png")
+    plt.savefig(root / "boston_ppc.png")
     plt.close()
 
     y_pred = posterior_predictive["y"]
@@ -72,10 +76,10 @@ def _save_results(
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
-    plt.savefig("./data/boston_prediction.png")
+    plt.savefig(root / "boston_prediction.png")
     plt.close()
 
-    jnp.savez("./data/boston_posterior.npz", **posterior_samples)
+    jnp.savez(root / "boston_posterior.npz", **posterior_samples)
 
 
 def main() -> None:
