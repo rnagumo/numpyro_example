@@ -1,4 +1,6 @@
-from typing import Dict, Optional
+"""Boston hous pricing regression with missing features."""
+
+from typing import Dict, Optional, Tuple
 
 import arviz as az
 import jax.numpy as jnp
@@ -13,10 +15,26 @@ from sklearn.datasets import load_boston
 
 def bayesian_regression(x: np.ndarray, y: Optional[np.ndarray] = None) -> None:
 
-    _, x_dim = jnp.shape(x)
+    batch, x_dim = jnp.shape(x)
     theta = numpyro.sample("theta", dist.Normal(jnp.zeros(x_dim), jnp.ones(x_dim) * 100))
     sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
-    numpyro.sample("y", dist.Normal(jnp.matmul(x, theta), sigma), obs=y)    
+
+    with numpyro.plate("batch", batch, dim=-2):
+        x_sample = numpyro.sample("x_sample", dist.Normal(x.mean(axis=0), x.std(axis=0)), obs=x)
+    numpyro.sample("y", dist.Normal(jnp.matmul(x_sample, theta), sigma), obs=y)
+
+
+def _load_dataset(missing_rate: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+    x, y = load_boston(return_X_y=True)
+    x_missing = np.copy(x)
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
+            x_missing[i, j] = np.nan if np.random.rand() < missing_rate else x_missing[i, j]
+
+    assert np.isnan(x).sum() == 0
+
+    return x, y, x_missing
 
 
 def _save_results(
@@ -62,7 +80,7 @@ def _save_results(
 
 def main() -> None:
 
-    x, y = load_boston(return_X_y=True)
+    _, y, x_missing = _load_dataset()
 
     num_chains = 4
     numpyro.set_platform("cpu")
@@ -72,15 +90,15 @@ def main() -> None:
     rng_key, rng_key_posterior, rng_key_prior = random.split(rng_key, 3)
 
     predictive = infer.Predictive(bayesian_regression, num_samples=500)
-    prior = predictive(rng_key_prior, x)
+    prior = predictive(rng_key_prior, x_missing)
 
     kernel = infer.NUTS(bayesian_regression)
     mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
-    mcmc.run(rng_key, x, y)
+    mcmc.run(rng_key, x_missing, y)
     posterior_samples = mcmc.get_samples()
 
     predictive = infer.Predictive(bayesian_regression, posterior_samples=posterior_samples)
-    posterior_predictive = predictive(rng_key_posterior, x)
+    posterior_predictive = predictive(rng_key_posterior, x_missing)
 
     _save_results(y, mcmc, prior, posterior_samples, posterior_predictive)
 
