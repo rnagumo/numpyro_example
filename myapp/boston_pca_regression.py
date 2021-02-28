@@ -1,4 +1,5 @@
 import argparse
+import pathlib
 from typing import Dict, List, Optional, Tuple
 
 import arviz as az
@@ -86,7 +87,11 @@ def _save_results(
     var_names: Optional[List[str]] = None,
 ) -> None:
 
-    jnp.savez("./data/missing_boston_posterior.npz", **posterior_samples)
+    root = pathlib.Path("./data/boston_pca_reg")
+    root.mkdir(exist_ok=True)
+
+    jnp.savez(root / f"posterior_samples_{suffix}.npz", **posterior_samples)
+    jnp.savez(root / f"posterior_predictive_{suffix}.npz", **posterior_predictive)
 
     # Arviz
     numpyro_data = az.from_numpyro(
@@ -96,7 +101,7 @@ def _save_results(
     )
 
     az.plot_trace(numpyro_data, var_names=var_names)
-    plt.savefig(f"./data/missing_boston_trace_{suffix}.png")
+    plt.savefig(root / f"trace_{suffix}.png")
     plt.close()
 
     if y is None:
@@ -115,7 +120,7 @@ def _save_results(
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
-    plt.savefig(f"./data/missing_boston_prediction_{suffix}.png")
+    plt.savefig(root / f"prediction_{suffix}.png")
     plt.close()
 
 
