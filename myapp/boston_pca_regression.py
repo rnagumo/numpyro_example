@@ -23,8 +23,8 @@ def pca_regression(
 
     if x is not None:
         batch, x_dim = jnp.shape(x)
-        x_mu = x.mean(axis=0)
-        x_std = x.std(axis=0)
+        x_mu = np.nanmean(x, axis=0)
+        x_std = np.nanstd(x, axis=0)
     else:
         x_mu = jnp.zeros(x_dim)
         x_std = jnp.ones(x_dim)
@@ -111,8 +111,8 @@ def _save_results(
 
 def main(args: argparse.Namespace) -> None:
 
-    x, y, x_missing = _load_dataset()
-    batch, x_dim = x.shape
+    _, y, x_missing = _load_dataset()
+    batch, x_dim = x_missing.shape
 
     numpyro.set_platform("cpu")
     numpyro.set_host_device_count(args.num_chains)
@@ -129,11 +129,11 @@ def main(args: argparse.Namespace) -> None:
         num_samples=args.num_samples,
         num_chains=args.num_chains
     )
-    mcmc.run(rng_key_posterior, x, y)
+    mcmc.run(rng_key_posterior, x_missing, y)
     posterior_samples_pca = mcmc.get_samples()
 
     predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples_pca)
-    posterior_predictive_pca = predictive(rng_key_pca_pred, x)
+    posterior_predictive_pca = predictive(rng_key_pca_pred, x_missing)
 
     _save_results(
         y, mcmc, prior, posterior_samples_pca, posterior_predictive_pca,
