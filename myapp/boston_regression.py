@@ -71,8 +71,8 @@ def _save_results(
     root = pathlib.Path("./data/boston_reg")
     root.mkdir(exist_ok=True)
 
-    jnp.savez(root / "boston_posterior_samples.npz", **posterior_samples)
-    jnp.savez(root / "boston_posterior_predictive.npz", **posterior_predictive)
+    jnp.savez(root / "posterior_samples.npz", **posterior_samples)
+    jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
     numpyro_data = az.from_numpyro(
         mcmc,
@@ -81,12 +81,12 @@ def _save_results(
     )
 
     az.plot_trace(numpyro_data, var_names=("theta", "sigma"))
-    plt.savefig(root / "boston_trace.png")
+    plt.savefig(root / "trace.png")
     plt.close()
 
     az.plot_ppc(numpyro_data)
     plt.legend(loc="upper right")
-    plt.savefig(root / "boston_ppc.png")
+    plt.savefig(root / "ppc.png")
     plt.close()
 
     y_pred = posterior_predictive["y"]
@@ -101,7 +101,7 @@ def _save_results(
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
-    plt.savefig(root / "boston_prediction.png")
+    plt.savefig(root / "prediction.png")
     plt.close()
 
 
