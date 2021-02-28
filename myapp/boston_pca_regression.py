@@ -136,13 +136,13 @@ def main(args: argparse.Namespace) -> None:
         num_chains=args.num_chains
     )
     mcmc.run(rng_key_posterior, x_missing, y)
-    posterior_samples_pca = mcmc.get_samples()
+    posterior_samples = mcmc.get_samples()
 
-    predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples_pca)
-    posterior_predictive_pca = predictive(rng_key_pca_pred, x_missing)
+    predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples)
+    posterior_predictive = predictive(rng_key_pca_pred, x_missing)
 
     _save_results(
-        y, mcmc, prior, posterior_samples_pca, posterior_predictive_pca,
+        y, mcmc, prior, posterior_samples, posterior_predictive,
         var_names=["phi", "eta", "theta", "sigma"]
     )
 
