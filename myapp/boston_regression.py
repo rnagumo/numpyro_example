@@ -1,4 +1,18 @@
-"""Boston hous pricing regression with missing features."""
+"""Boston hous pricing regression with missing features.
+
+ref)
+mask handler does not behave as expected
+https://github.com/pyro-ppl/numpyro/issues/568
+
+Behavior of mask handler with invalid observation — possible bug?
+https://forum.pyro.ai/t/behavior-of-mask-handler-with-invalid-observation-possible-bug/1719/3
+
+Improve Your Model with Missing Data | Imputation with NumPyro
+https://towardsdatascience.com/improve-your-model-with-missing-data-imputation-with-numpyro-dcb3c3376eff
+
+jax.ops.index_update
+https://jax.readthedocs.io/en/latest/_autosummary/jax.ops.index_update.html
+"""
 
 import pathlib
 from typing import Dict, Optional, Tuple
@@ -9,8 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
-from jax import random
-from numpyro import diagnostics, infer
+from jax import random, ops
+from numpyro import diagnostics, handlers, infer
 from sklearn.datasets import load_boston
 
 
@@ -20,9 +34,17 @@ def bayesian_regression(x: np.ndarray, y: Optional[np.ndarray] = None) -> None:
     theta = numpyro.sample("theta", dist.Normal(jnp.zeros(x_dim), jnp.ones(x_dim) * 100))
     sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
 
+    x_mu = numpyro.sample("x_mu", dist.Normal(jnp.nanmean(x, axis=0), jnp.nanmean(x, axis=0)))
+    x_std = numpyro.sample("x_std", dist.Gamma(1.0, 1.0))
     with numpyro.plate("batch", batch, dim=-2):
-        x_sample = numpyro.sample("x_sample", dist.Normal(x.mean(axis=0), x.std(axis=0)), obs=x)
-    numpyro.sample("y", dist.Normal(jnp.matmul(x_sample, theta), sigma), obs=y)
+        mask = ~np.isnan(x)
+        numpyro.sample("x", dist.Normal(x_mu, x_std).mask(mask), obs=x)
+        if mask.any():
+            index = (~mask).astype(int).nonzero()
+            x_spl = numpyro.sample("x_spl", dist.Normal(x_mu, x_std).mask(False))
+            x_filled = ops.index_update(x, index, x_spl[index])
+
+    numpyro.sample("y", dist.Normal(jnp.matmul(x_filled, theta), sigma), obs=y)
 
 
 def _load_dataset(missing_rate: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -48,6 +70,9 @@ def _save_results(
 
     root = pathlib.Path("./data/boston_reg")
     root.mkdir(exist_ok=True)
+
+    jnp.savez(root / "boston_posterior_samples.npz", **posterior_samples)
+    jnp.savez(root / "boston_posterior_predictive.npz", **posterior_predictive)
 
     numpyro_data = az.from_numpyro(
         mcmc,
@@ -79,14 +104,12 @@ def _save_results(
     plt.savefig(root / "boston_prediction.png")
     plt.close()
 
-    jnp.savez(root / "boston_posterior.npz", **posterior_samples)
-
 
 def main() -> None:
 
     _, y, x_missing = _load_dataset()
 
-    num_chains = 4
+    num_chains = 1
     numpyro.set_platform("cpu")
     numpyro.set_host_device_count(num_chains)
 
