@@ -13,39 +13,38 @@ from numpyro import diagnostics, infer
 from sklearn.datasets import load_boston
 
 
-def pca_with_missing(
-    x: Optional[np.ndarray] = None, batch: int = 100, x_dim: int = 50, z_dim: int = 5
+def pca_regression(
+    x: Optional[np.ndarray] = None,
+    y: Optional[np.ndarray] = None,
+    batch: int = 100,
+    x_dim: int = 50,
+    z_dim: int = 5,
 ) -> None:
 
     if x is not None:
         batch, x_dim = jnp.shape(x)
+        x_mu = x.mean(axis=0)
+        x_std = x.std(axis=0)
+    else:
+        x_mu = jnp.zeros(x_dim)
+        x_std = jnp.ones(x_dim)
 
     phi = numpyro.sample("phi", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
-    eta = numpyro.sample("eta", dist.Normal(jnp.zeros(x_dim), jnp.ones(x_dim)))
-    with numpyro.plate("batch", batch, dim=-2):
-        z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
-        numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, jnp.ones(x_dim)), obs=x)
-
-
-def latent_regression(z: np.ndarray, y: Optional[np.ndarray] = None) -> None:
-
-    z_dim = z.shape[-1]
+    eta = numpyro.sample("eta", dist.Normal(x_mu, x_std))
     theta = numpyro.sample("theta", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
     sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
+
+    with numpyro.plate("batch", batch, dim=-2):
+        if x is not None:
+            mask = ~np.isnan(x)
+        else:
+            mask = False
+
+        z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
+        numpyro.sample("x_sample", dist.Normal(jnp.matmul(z, phi) + eta, x_std))
+        numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, x_std).mask(mask), obs=x)
+
     numpyro.sample("y", dist.Normal(jnp.matmul(z, theta), sigma), obs=y)
-
-
-def sample_missing(posterior_samples: Dict[str, jnp.ndarray], rng_key: np.ndarray) -> jnp.ndarray:
-
-    z = posterior_samples["z"]
-    phi = posterior_samples["phi"]
-    eta = posterior_samples["eta"]
-    x_dim = phi.shape[-1]
-
-    x_mu = jnp.einsum("nij,njh->nih", z, phi) + jnp.expand_dims(eta, 1)
-    x_sample = dist.Normal(x_mu, jnp.ones((1, 1, x_dim))).sample(rng_key)
-
-    return x_sample
 
 
 def _load_dataset(missing_rate: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -61,37 +60,21 @@ def _load_dataset(missing_rate: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np
     return x, y, x_missing
 
 
-def _impute_missing_values(
-    posterior_samples: Dict[str, jnp.ndarray],
-    posterior_predictive: Dict[str, jnp.ndarray],
-    rng_key: np.ndarray,
-) -> Dict[str, jnp.ndarray]:
-
-    x_sample = sample_missing(posterior_samples, rng_key)
-    x_filled = np.copy(posterior_predictive["x"])
-    mask = np.isnan(x_filled)
-    x_filled[mask] = x_sample[mask]
-    posterior_predictive["x"] = x_filled
-
-    return posterior_predictive
-
-
 def _save_results(
+    y: np.ndarray,
     mcmc: infer.MCMC,
-    y: Optional[np.ndarray] = None,
     prior: Optional[Dict[str, jnp.ndarray]] = None,
     posterior_samples: Optional[Dict[str, jnp.ndarray]] = None,
     posterior_predictive: Optional[Dict[str, jnp.ndarray]] = None,
     *,
-    suffix: str = "",
     var_names: Optional[List[str]] = None,
 ) -> None:
 
     root = pathlib.Path("./data/boston_pca_reg")
     root.mkdir(exist_ok=True)
 
-    jnp.savez(root / f"posterior_samples_{suffix}.npz", **posterior_samples)
-    jnp.savez(root / f"posterior_predictive_{suffix}.npz", **posterior_predictive)
+    jnp.savez(root / "posterior_samples.npz", **posterior_samples)
+    jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
     # Arviz
     numpyro_data = az.from_numpyro(
@@ -101,11 +84,13 @@ def _save_results(
     )
 
     az.plot_trace(numpyro_data, var_names=var_names)
-    plt.savefig(root / f"trace_{suffix}.png")
+    plt.savefig(root / "trace.png")
     plt.close()
 
-    if y is None:
-        return
+    az.plot_ppc(numpyro_data)
+    plt.legend(loc="upper right")
+    plt.savefig(root / "ppc.png")
+    plt.close()
 
     # Prediction
     y_pred = posterior_predictive["y"]
@@ -120,7 +105,7 @@ def _save_results(
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
-    plt.savefig(root / f"prediction_{suffix}.png")
+    plt.savefig(root / "prediction.png")
     plt.close()
 
 
@@ -133,46 +118,23 @@ def main(args: argparse.Namespace) -> None:
     numpyro.set_host_device_count(args.num_chains)
     rng_key = random.PRNGKey(0)
 
-    # PCA
     rng_key, rng_key_pca, rng_key_pca_pred = random.split(rng_key, 3)
-    kernel = infer.NUTS(pca_with_missing)
+    kernel = infer.NUTS(pca_regression)
     mcmc = infer.MCMC(
-        kernel, num_warmup=args.num_warmup, num_samples=args.num_samples,
+        kernel,
+        num_warmup=args.num_warmup,
+        num_samples=args.num_samples,
         num_chains=args.num_chains
     )
-    mcmc.run(rng_key_pca, x)
+    mcmc.run(rng_key_pca, x, y)
     posterior_samples_pca = mcmc.get_samples()
 
-    predictive = infer.Predictive(pca_with_missing, posterior_samples=posterior_samples_pca)
-    posterior_predictive_pca = predictive(rng_key_pca_pred, batch=batch, x_dim=x_dim)
-
-    rng_key, rng_key_impute = random.split(rng_key, 2)
-    posterior_predictive_pca = _impute_missing_values(
-        posterior_samples_pca, posterior_predictive_pca, rng_key_impute
-    )
+    predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples_pca)
+    posterior_predictive_pca = predictive(rng_key_pca_pred, x)
 
     _save_results(
-        mcmc, None, None, posterior_samples_pca, posterior_predictive_pca,
-        var_names=["phi", "eta"], suffix="pca",
-    )
-
-    # Linear regression
-    rng_key, rng_key_lr, rng_key_lr_pred = random.split(rng_key, 3)
-    z = posterior_samples_pca["z"].mean(axis=0)
-
-    kernel = infer.NUTS(latent_regression)
-    mcmc = infer.MCMC(
-        kernel, num_warmup=args.num_warmup, num_samples=args.num_samples,
-        num_chains=args.num_chains
-    )
-    mcmc.run(rng_key_lr, z, y)
-    posterior_samples_lr = mcmc.get_samples()
-
-    predictive = infer.Predictive(latent_regression, posterior_samples=posterior_samples_lr)
-    posterior_predictive_lr = predictive(rng_key_lr_pred, z)
-
-    _save_results(
-        mcmc, y, None, posterior_samples_lr, posterior_predictive_lr, suffix="linear"
+        y, mcmc, None, posterior_samples_pca, posterior_predictive_pca,
+        var_names=["phi", "eta", "theta", "sigma"]
     )
 
 
