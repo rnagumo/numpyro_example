@@ -23,8 +23,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
-from jax import random, ops
-from numpyro import diagnostics, handlers, infer
+from jax import ops, random
+from numpyro import diagnostics, infer
 from sklearn.datasets import load_boston
 
 
@@ -92,8 +92,8 @@ def _save_results(
     y_pred = posterior_predictive["y"]
     y_hpdi = diagnostics.hpdi(y_pred)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 6))
     plt.plot(y, color=colors[0])

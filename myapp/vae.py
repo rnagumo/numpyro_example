@@ -8,7 +8,7 @@ import numpyro
 import numpyro.distributions as dist
 from jax import jit, lax, random
 from jax.experimental import stax
-from numpyro import optim, infer
+from numpyro import infer, optim
 from numpyro.examples.datasets import MNIST, load_dataset
 from numpyro.infer.svi import SVIState
 
@@ -94,7 +94,7 @@ def main(args: argparse.Namespace) -> None:
             loss_sum += loss
             return loss_sum, svi_state
 
-        return lax.fori_loop(0, num_train, body_fun, (0., svi_state))
+        return lax.fori_loop(0, num_train, body_fun, (0.0, svi_state))
 
     @jit
     def eval_test(svi_state: SVIState, rng_key: np.ndarray) -> jnp.ndarray:
@@ -105,7 +105,7 @@ def main(args: argparse.Namespace) -> None:
             loss_sum += loss
             return loss_sum
 
-        loss = lax.fori_loop(0, num_test, body_fun, 0.)
+        loss = lax.fori_loop(0, num_test, body_fun, 0.0)
         loss = loss / num_test
         return loss
 

@@ -102,8 +102,8 @@ def _save_results(
     y_pred = posterior_predictive["y"]
     y_hpdi = diagnostics.hpdi(y_pred)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 6))
     plt.plot(y, color=colors[0])
@@ -133,7 +133,7 @@ def main(args: argparse.Namespace) -> None:
         kernel,
         num_warmup=args.num_warmup,
         num_samples=args.num_samples,
-        num_chains=args.num_chains
+        num_chains=args.num_chains,
     )
     mcmc.run(rng_key_posterior, x_missing, y)
     posterior_samples = mcmc.get_samples()
@@ -142,8 +142,12 @@ def main(args: argparse.Namespace) -> None:
     posterior_predictive = predictive(rng_key_pca_pred, x_missing)
 
     _save_results(
-        y, mcmc, prior, posterior_samples, posterior_predictive,
-        var_names=["phi", "eta", "theta", "sigma"]
+        y,
+        mcmc,
+        prior,
+        posterior_samples,
+        posterior_predictive,
+        var_names=["phi", "eta", "theta", "sigma"],
     )
 
 
