@@ -34,14 +34,16 @@ def pca_regression(
     if y is not None:
         y_mu = np.mean(y) * np.ones(z_dim)
         y_std = np.std(y) * np.ones(z_dim)
+        y_std_val = np.std(y)
     else:
         y_mu = np.zeros(z_dim)
         y_std = np.ones(z_dim)
+        y_std_val = 1.0
 
     phi = numpyro.sample("phi", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
     eta = numpyro.sample("eta", dist.Normal(x_mu, x_std))
     theta = numpyro.sample("theta", dist.Normal(y_mu, y_std))
-    sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
+    sigma = numpyro.sample("sigma", dist.Gamma(y_std_val, 1.0))
 
     with numpyro.plate("batch", batch, dim=-2):
         z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
