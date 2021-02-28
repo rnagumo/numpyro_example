@@ -41,7 +41,7 @@ def bayesian_regression(x: np.ndarray, y: Optional[np.ndarray] = None) -> None:
         numpyro.sample("x", dist.Normal(x_mu, x_std).mask(mask), obs=x)
         if mask.any():
             index = (~mask).astype(int).nonzero()
-            x_spl = numpyro.sample("x_spl", dist.Normal(x_mu, x_std).mask(False))
+            x_spl = numpyro.sample("x_spl", dist.Normal(x_mu, x_std))
             x_filled = ops.index_update(x, index, x_spl[index])
 
     numpyro.sample("y", dist.Normal(jnp.matmul(x_filled, theta), sigma), obs=y)
