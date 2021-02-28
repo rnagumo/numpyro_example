@@ -25,9 +25,11 @@ def pca_regression(
         batch, x_dim = jnp.shape(x)
         x_mu = np.nanmean(x, axis=0)
         x_std = np.nanstd(x, axis=0)
+        mask = ~np.isnan(x)
     else:
         x_mu = jnp.zeros(x_dim)
         x_std = jnp.ones(x_dim)
+        mask = False
 
     phi = numpyro.sample("phi", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
     eta = numpyro.sample("eta", dist.Normal(x_mu, x_std))
@@ -35,11 +37,6 @@ def pca_regression(
     sigma = numpyro.sample("sigma", dist.Gamma(1.0, 1.0))
 
     with numpyro.plate("batch", batch, dim=-2):
-        if x is not None:
-            mask = ~np.isnan(x)
-        else:
-            mask = False
-
         z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
         numpyro.sample("x_sample", dist.Normal(jnp.matmul(z, phi) + eta, x_std))
         numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, x_std).mask(mask), obs=x)
