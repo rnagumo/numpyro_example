@@ -116,9 +116,12 @@ def main(args: argparse.Namespace) -> None:
 
     numpyro.set_platform("cpu")
     numpyro.set_host_device_count(args.num_chains)
-    rng_key = random.PRNGKey(0)
+    rng_key = random.PRNGKey(1)
+    rng_key, rng_key_prior, rng_key_posterior, rng_key_pca_pred = random.split(rng_key, 4)
 
-    rng_key, rng_key_pca, rng_key_pca_pred = random.split(rng_key, 3)
+    predictive = infer.Predictive(pca_regression, num_samples=500)
+    prior = predictive(rng_key_prior, batch=batch, x_dim=x_dim)
+
     kernel = infer.NUTS(pca_regression)
     mcmc = infer.MCMC(
         kernel,
@@ -126,14 +129,14 @@ def main(args: argparse.Namespace) -> None:
         num_samples=args.num_samples,
         num_chains=args.num_chains
     )
-    mcmc.run(rng_key_pca, x, y)
+    mcmc.run(rng_key_posterior, x, y)
     posterior_samples_pca = mcmc.get_samples()
 
     predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples_pca)
     posterior_predictive_pca = predictive(rng_key_pca_pred, x)
 
     _save_results(
-        y, mcmc, None, posterior_samples_pca, posterior_predictive_pca,
+        y, mcmc, prior, posterior_samples_pca, posterior_predictive_pca,
         var_names=["phi", "eta", "theta", "sigma"]
     )
 
