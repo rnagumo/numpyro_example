@@ -91,6 +91,7 @@ def _save_results(
 
     y_pred = posterior_predictive["y"]
     y_hpdi = diagnostics.hpdi(y_pred)
+    train_len = int(len(y) * 0.8)
 
     prop_cycle = plt.rcParams["axes.prop_cycle"]
     colors = prop_cycle.by_key()["color"]
@@ -99,6 +100,7 @@ def _save_results(
     plt.plot(y, color=colors[0])
     plt.plot(y_pred.mean(axis=0), color=colors[1])
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
+    plt.axvline(train_len, linestyle="--", color=colors[2])
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
     plt.savefig(root / "prediction.png")
@@ -108,6 +110,11 @@ def _save_results(
 def main() -> None:
 
     _, y, x_missing = _load_dataset()
+    train_len = int(len(y) * 0.8)
+    x_train = x_missing[:train_len]
+    x_test = x_missing[train_len:]
+    y_train = y[:train_len]
+    y_test = y[train_len:]
 
     num_chains = 1
     numpyro.set_platform("cpu")
@@ -117,11 +124,11 @@ def main() -> None:
     rng_key, rng_key_posterior, rng_key_prior = random.split(rng_key, 3)
 
     predictive = infer.Predictive(bayesian_regression, num_samples=500)
-    prior = predictive(rng_key_prior, x_missing)
+    prior = predictive(rng_key_prior, x_train)
 
     kernel = infer.NUTS(bayesian_regression)
     mcmc = infer.MCMC(kernel, num_warmup=1000, num_samples=1000, num_chains=num_chains)
-    mcmc.run(rng_key, x_missing, y)
+    mcmc.run(rng_key, x_train, y_train)
     posterior_samples = mcmc.get_samples()
 
     predictive = infer.Predictive(bayesian_regression, posterior_samples=posterior_samples)
