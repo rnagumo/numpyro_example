@@ -82,4 +82,3 @@ if __name__ == "__main__":
     numpyro.set_host_device_count(args.num_chains)
 
     main(args)
-
