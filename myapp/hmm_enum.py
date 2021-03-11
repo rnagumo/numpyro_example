@@ -20,6 +20,7 @@ from numpyro.infer import MCMC, NUTS
 
 def model_1(sequences: np.ndarray, lengths: np.ndarray, hidden_dim: int = 16) -> None:
 
+    # (batch, seq, data_dim)
     num_sequences, _, data_dim = sequences.shape
 
     probs_x = numpyro.sample(
@@ -32,16 +33,20 @@ def model_1(sequences: np.ndarray, lengths: np.ndarray, hidden_dim: int = 16) ->
     def transition_fn(
         carry: Tuple[jnp.ndarray, jnp.ndarray], y: jnp.ndarray
     ) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
+        """One time step funciton."""
 
         x_prev, t = carry
         with numpyro.plate("sequence", num_sequences, dim=-2):
             with mask(mask=(t < lengths)[..., None]):
+                # Forward transition
                 x = numpyro.sample("x", dist.Categorical(probs_x[x_prev]))
                 with numpyro.plate("tones", data_dim, dim=-1):
+                    # Observe y
                     numpyro.sample("y", dist.Bernoulli(probs_y[x.squeeze(-1)]), obs=y)
         return (x, t + 1), None
 
     x_init = jnp.zeros((num_sequences, 1), dtype=jnp.int32)
+    # for loop with time step: data shape = (seq, batch, data_dim)
     scan(transition_fn, (x_init, 0), jnp.swapaxes(sequences, 0, 1))
 
 
