@@ -5,7 +5,7 @@ ref) https://github.com/pyro-ppl/numpyro/blob/master/examples/hmm_enum.py
 
 import argparse
 import pathlib
-from typing import Tuple
+from typing import Optional, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -20,14 +20,23 @@ from numpyro.handlers import mask
 
 
 def model_1(
-    sequences: np.ndarray, lengths: np.ndarray, hidden_dim: int = 16, future_steps: int = 0
+    sequences: Optional[np.ndarray] = None,
+    lengths: Optional[np.ndarray] = None,
+    hidden_dim: int = 16,
+    batch: int = 100,
+    seq_len: int = 0,
+    data_dim: int = 10,
+    future_steps: int = 0,
 ) -> None:
 
-    # (batch, seq, data_dim)
-    batch, _, data_dim = sequences.shape
+    if sequences is not None:
+        assert lengths is not None
+        batch, seq_len, data_dim = sequences.shape
 
-    future_sequence = np.zeros((batch, future_steps, data_dim))
-    sequences = np.concatenate([sequences, future_sequence], axis=1)
+        future = np.zeros((batch, future_steps, data_dim))
+        sequences = np.concatenate([sequences, future], axis=1)
+    else:
+        lengths = np.zeros((batch))
 
     probs_x = numpyro.sample(
         "probs_x", dist.Dirichlet(0.9 * jnp.eye(hidden_dim) + 0.1).to_event(1)
@@ -44,18 +53,18 @@ def model_1(
         x_prev, t = carry
         with numpyro.plate("sequence", batch, dim=-2):
             with mask(mask=(t < lengths)[..., None]):
-                # Forward transition
                 x = numpyro.sample("x", dist.Categorical(probs_x[x_prev]))
                 with numpyro.plate("tones", data_dim, dim=-1):
-                    # Observe y
                     numpyro.sample("y", dist.Bernoulli(probs_y[x.squeeze(-1)]), obs=y)
-                    numpyro.sample("y_sample", dist.Bernoulli(probs_y[x.squeeze(-1)]))
         return (x, t + 1), None
 
     x_init = jnp.zeros((batch, 1), dtype=jnp.int32)
 
-    # for loop with time step: data shape = (seq, batch, data_dim)
-    scan(transition_fn, (x_init, 0), jnp.swapaxes(sequences, 0, 1))
+    if sequences is not None:
+        # for loop with time step: data shape = (seq, batch, data_dim)
+        scan(transition_fn, (x_init, 0), jnp.swapaxes(sequences, 0, 1))
+    else:
+        scan(transition_fn, (x_init, 0), None, length=seq_len + future_steps)
 
 
 model_dict = {
@@ -73,9 +82,15 @@ def main(args: argparse.Namespace) -> None:
     # Remove never used data dimension to reduce computation time
     present_notes = (sequences == 1).sum(0).sum(0) > 0
     sequences = sequences[..., present_notes]
+    batch, seq_len, data_dim = sequences.shape
 
     rng_key = random.PRNGKey(0)
-    rng_key, rng_key_pred = random.split(rng_key, 2)
+    rng_key, rng_key_prior, rng_key_pred = random.split(rng_key, 3)
+
+    predictive = infer.Predictive(model, num_samples=10)
+    prior_samples = predictive(
+        rng_key_prior, batch=batch, seq_len=seq_len, data_dim=data_dim, future_steps=20
+    )
 
     kernel = infer.NUTS(model)
     mcmc = infer.MCMC(kernel, args.num_warmup, args.num_samples, args.num_chains)
@@ -88,6 +103,7 @@ def main(args: argparse.Namespace) -> None:
     path = pathlib.Path("./data/hmm_enum")
     path.mkdir(exist_ok=True)
 
+    jnp.savez(path / "prior_samples.npz", **prior_samples)
     jnp.savez(path / "posterior_samples.npz", **posterior_samples)
     jnp.savez(path / "predictive_samples.npz", **predictive_samples)
 
