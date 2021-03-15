@@ -1,3 +1,9 @@
+"""Time series forecasting with 'Seasonal, Global Trend model'.
+
+http://num.pyro.ai/en/stable/tutorials/time_series_forecasting.html
+"""
+
+
 import pathlib
 from typing import Dict, Tuple
 
