@@ -1,4 +1,5 @@
-from typing import Tuple
+import pathlib
+from typing import Dict, Tuple
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -74,34 +75,35 @@ def sgt(y: jnp.ndarray, seasonality: int, future: int = 0) -> None:
             transition_fn, (level_init, s_init, moving_sum), jnp.arange(1, num_lim + future)
         )
 
-    if future > 0:
-        numpyro.deterministic("y_forecast", ys[-future:])
+    numpyro.deterministic("y_forecast", ys)
 
 
 def plot_results(
-    time_series: np.ndarray, y: np.ndarray, forecast_marginal: jnp.ndarray, test_index: int
+    time_series: np.ndarray,
+    y: np.ndarray,
+    posterior_samples: Dict[str, jnp.ndarray],
+    posterior_predictive: Dict[str, jnp.ndarray],
+    test_index: int,
+    root: pathlib.Path,
 ) -> None:
 
-    t_test = time_series[test_index:]
-    y_test = y[test_index:]
-
+    forecast_marginal = posterior_predictive["y_forecast"]
     y_pred = jnp.mean(forecast_marginal, axis=0)
-    smape = jnp.mean(jnp.abs(y_pred - y_test) / (y_pred + y_test)) * 200
-    msqrt = jnp.sqrt(jnp.mean((y_pred - y_test) ** 2))
+    smape = jnp.mean(jnp.abs(y_pred - y) / (y_pred + y)) * 200
+    msqrt = jnp.sqrt(jnp.mean((y_pred - y) ** 2))
     hpd_low, hpd_high = hpdi(forecast_marginal)
 
     plt.figure(figsize=(8, 4))
     plt.plot(time_series, y)
-    plt.plot(t_test, y_pred, lw=2)
-    plt.fill_between(t_test, hpd_low, hpd_high, alpha=0.3)
+    plt.plot(time_series, y_pred, lw=2)
+    plt.fill_between(time_series, hpd_low, hpd_high, alpha=0.3)
     plt.title(f"Forecasting lynx dataset with SGT (sMAPE: {smape:.2f}, RMSE: {msqrt:.2f})")
     plt.tight_layout()
-    plt.show()
+    plt.savefig(root / "plot.png")
+    plt.close()
 
 
 def main() -> None:
-
-    numpyro.set_host_device_count(4)
 
     df = load_dataset()
     test_index = 80
@@ -110,17 +112,24 @@ def main() -> None:
 
     # Inference
     kernel = NUTS(sgt)
-    mcmc = MCMC(kernel, num_warmup=500, num_samples=500, num_chains=4)
+    mcmc = MCMC(kernel, num_warmup=500, num_samples=500, num_chains=1)
     mcmc.run(random.PRNGKey(0), y_train, seasonality=38)
     mcmc.print_summary()
-    samples = mcmc.get_samples()
+    posterior_samples = mcmc.get_samples()
 
     # Prediction
-    predictive = Predictive(sgt, samples, return_sites=["y_forecast"])
-    prediction_sample = predictive(random.PRNGKey(1), y_train, seasonality=38, future=test_len)
-    forecast_marginal = prediction_sample["y_forecast"]
+    predictive = Predictive(sgt, posterior_samples, return_sites=["y_forecast"])
+    posterior_predictive = predictive(random.PRNGKey(1), y_train, seasonality=38, future=test_len)
 
-    plot_results(df["time"].values, df["value"].values, forecast_marginal, test_index=test_index)
+    root = pathlib.Path("./data/time_series")
+    root.mkdir(exist_ok=True)
+
+    jnp.savez(root / "posterior_samples.npz", **posterior_samples)
+    jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
+    plot_results(
+        df["time"].values, df["value"].values, posterior_samples, posterior_predictive, test_index,
+        root
+    )
 
 
 if __name__ == "__main__":
