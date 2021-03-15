@@ -49,12 +49,17 @@ def model(
 
 def _save_results(
     x: jnp.ndarray,
+    prior_samples: Dict[str, jnp.ndarray],
     posterior_samples: Dict[str, jnp.ndarray],
     posterior_predictive: Dict[str, jnp.ndarray],
 ) -> None:
 
     root = pathlib.Path("./data/kalman")
     root.mkdir(exist_ok=True)
+
+    jnp.savez(root / "piror_samples.npz", **prior_samples)
+    jnp.savez(root / "posterior_samples.npz", **posterior_samples)
+    jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
     x_pred_trn = posterior_samples["x_sample"]
     x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
@@ -115,7 +120,7 @@ def main() -> None:
     predictive = infer.Predictive(model, posterior_samples=posterior_samples)
     posterior_predictive = predictive(rng_key_posterior, x, future_steps=10)
 
-    _save_results(x, posterior_samples, posterior_predictive)
+    _save_results(x, prior_samples, posterior_samples, posterior_predictive)
 
 
 if __name__ == "__main__":
