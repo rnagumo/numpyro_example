@@ -12,10 +12,20 @@ from numpyro import diagnostics, infer
 from numpyro.contrib.control_flow import scan
 
 
-def model(x: Optional[jnp.ndarray] = None, future_steps: int = 0) -> None:
+def model(
+    x: Optional[jnp.ndarray] = None, future_steps: int = 0, batch: int = 0, x_dim: int = 1
+) -> None:
+    """Simple Kalman filter model (random walk).
+
+    Args:
+        x: **Batch-first** data, `shape = (seq_len, batch, data_dim)`.
+        future_steps: Forecasting time steps.
+        batch: Batch size for prior sampling.
+        x_dim: Dimension of data for prior sampling.
+    """
 
     if x is not None:
-        seq_len = x.shape[0]
+        seq_len, batch, x_dim = x.shape
     else:
         seq_len = 0
 
@@ -32,7 +42,7 @@ def model(x: Optional[jnp.ndarray] = None, future_steps: int = 0) -> None:
         numpyro.sample("x_sample", dist.Normal(emit * z, 1))
         return (z,), None
 
-    z_init = jnp.array(0.0)
+    z_init = jnp.zeros((batch, x_dim))
     with numpyro.handlers.condition(data={"x": x}):
         scan(transition_fn, (z_init,), jnp.arange(seq_len + future_steps))
 
@@ -86,13 +96,14 @@ def main() -> None:
         np.random.randn(10) - 1,
         np.random.randn(10) + 1
     ])
+    x = x[:, None, None]
 
     rng_key = random.PRNGKey(0)
     rng_key, rng_key_prior, rng_key_infer, rng_key_posterior = random.split(rng_key, 4)
 
     # prior
     predictive = infer.Predictive(model, num_samples=10)
-    prior_samples = predictive(rng_key_prior, future_steps=20)
+    prior_samples = predictive(rng_key_prior, future_steps=20, batch=10, x_dim=1)
 
     # Inference
     kernel = infer.NUTS(model)
