@@ -101,6 +101,7 @@ def _save_results(
     # Prediction
     y_pred = posterior_predictive["y"]
     y_hpdi = diagnostics.hpdi(y_pred)
+    train_len = int(len(y) * 0.99)
 
     prop_cycle = plt.rcParams["axes.prop_cycle"]
     colors = prop_cycle.by_key()["color"]
@@ -109,6 +110,7 @@ def _save_results(
     plt.plot(y, color=colors[0])
     plt.plot(y_pred.mean(axis=0), color=colors[1])
     plt.fill_between(np.arange(len(y)), y_hpdi[0], y_hpdi[1], color=colors[1], alpha=0.3)
+    plt.axvline(train_len, linestyle="--", color=colors[2])
     plt.xlabel("Index [a.u.]")
     plt.ylabel("Target [a.u.]")
     plt.savefig(root / "prediction.png")
@@ -119,6 +121,9 @@ def main(args: argparse.Namespace) -> None:
 
     _, y, x_missing = _load_dataset()
     batch, x_dim = x_missing.shape
+    train_len = int(len(y) * 0.99)
+    x_train = x_missing[:train_len]
+    y_train = y[:train_len]
 
     numpyro.set_platform("cpu")
     numpyro.set_host_device_count(args.num_chains)
@@ -135,10 +140,12 @@ def main(args: argparse.Namespace) -> None:
         num_samples=args.num_samples,
         num_chains=args.num_chains,
     )
-    mcmc.run(rng_key_posterior, x_missing, y)
+    mcmc.run(rng_key_posterior, x_train, y_train)
     posterior_samples = mcmc.get_samples()
 
-    predictive = infer.Predictive(pca_regression, posterior_samples=posterior_samples)
+    posterior_without_z = posterior_samples.copy()
+    posterior_without_z.pop("z")
+    predictive = infer.Predictive(pca_regression, posterior_samples=posterior_without_z)
     posterior_predictive = predictive(rng_key_pca_pred, x_missing)
 
     _save_results(
