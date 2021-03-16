@@ -43,9 +43,9 @@ def model(
 
         z_prev, *_ = carry
         z = numpyro.sample("z", dist.Normal(z_prev, jnp.ones(z_dim)))
-        numpyro.sample("x", dist.Normal(z + jnp.matmul(covariates[t], weight) + bias, sigma))
+        numpyro.sample("x", dist.Cauchy(z + jnp.matmul(covariates[t], weight) + bias, sigma))
         numpyro.sample(
-            "x_sample", dist.Normal(z + jnp.matmul(covariates[t], weight) + bias, sigma)
+            "x_sample", dist.Cauchy(z + jnp.matmul(covariates[t], weight) + bias, sigma)
         )
         return (z,), None
 
