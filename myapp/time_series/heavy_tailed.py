@@ -20,18 +20,19 @@ from numpyro import diagnostics, infer
 from numpyro.contrib.control_flow import scan
 
 
-def model_global(
+def model(
     covariates: jnp.ndarray,
     x: Optional[jnp.ndarray] = None,
     x_dim: int = 1,
+    z_dim: int = 1,
 ) -> None:
 
     if x is not None:
         x_dim = x.shape[-1]
 
-    seq_len, _, z_dim = covariates.shape
+    seq_len, batch, c_dim = covariates.shape
     weight = numpyro.sample(
-        "weight", dist.Normal(np.zeros((z_dim, x_dim)), np.ones((z_dim, x_dim)) * 0.1)
+        "weight", dist.Normal(np.zeros((c_dim, x_dim)), np.ones((c_dim, x_dim)) * 0.1)
     )
     bias = numpyro.sample("bias", dist.Normal(np.zeros(x_dim), np.ones(x_dim) * 10))
     sigma = numpyro.sample("sigma", dist.LogNormal(-5 * np.ones(x_dim), 5 * np.ones(x_dim)))
@@ -40,12 +41,16 @@ def model_global(
         carry: Tuple[jnp.ndarray], t: jnp.ndarray
     ) -> Tuple[Tuple[jnp.ndarray], jnp.ndarray]:
 
-        numpyro.sample("x", dist.Normal(jnp.matmul(covariates[t], weight) + bias, sigma))
-        numpyro.sample("x_sample", dist.Normal(jnp.matmul(covariates[t], weight) + bias, sigma))
-        return carry, None
+        z_prev, *_ = carry
+        z = numpyro.sample("z", dist.Normal(z_prev, jnp.ones(z_dim)))
+        numpyro.sample("x", dist.Normal(z + jnp.matmul(covariates[t], weight) + bias, sigma))
+        numpyro.sample(
+            "x_sample", dist.Normal(z + jnp.matmul(covariates[t], weight) + bias, sigma)
+        )
+        return (z,), None
 
     with numpyro.handlers.condition(data={"x": x}):
-        scan(transition_fn, (), jnp.arange(seq_len))
+        scan(transition_fn, (jnp.zeros((batch, z_dim)),), jnp.arange(seq_len))
 
 
 def _load_data(
@@ -125,8 +130,6 @@ def _save_results(
 
 
 def main() -> None:
-
-    model = model_global
 
     # Data
     x, t = _load_data(5)
