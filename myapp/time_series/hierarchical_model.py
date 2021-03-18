@@ -1,3 +1,8 @@
+"""Forecasting III: hierarchical models
+
+https://pyro.ai/examples/forecasting_iii.html
+"""
+
 import pathlib
 from typing import Any, Dict, Optional, Tuple
 
