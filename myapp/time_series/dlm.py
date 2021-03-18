@@ -39,7 +39,6 @@ def model(
         z = numpyro.sample("z", dist.Normal(z_prev, 1))
         weight = numpyro.sample("weight", dist.Normal(w_prev, weight_var))
         numpyro.sample("x", dist.Normal(z + jnp.matmul(covariates[t], weight), sigma))
-        numpyro.sample("x_sample", dist.Normal(z + jnp.matmul(covariates[t], weight), sigma))
         return (z, weight), None
 
     z_init = jnp.zeros((batch, x_dim))
@@ -76,6 +75,7 @@ def _save_results(
     prior_samples: Dict[str, jnp.ndarray],
     posterior_samples: Dict[str, jnp.ndarray],
     posterior_predictive: Dict[str, jnp.ndarray],
+    num_train: int,
 ) -> None:
 
     root = pathlib.Path("./data/dlm")
@@ -85,17 +85,18 @@ def _save_results(
     jnp.savez(root / "posterior_samples.npz", **posterior_samples)
     jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
-    x_pred_trn = posterior_samples["x_sample"]
+    x_pred = posterior_predictive["x"]
+
+    x_pred_trn = x_pred[:, :num_train]
     x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
-    len_train = x_pred_trn.shape[1]
-    t_train = np.arange(len_train)
+    t_train = np.arange(num_train)
 
-    x_pred_tst = posterior_predictive["x"][:, len_train:]
+    x_pred_tst = x_pred[:, num_train:]
     x_hpdi_tst = diagnostics.hpdi(x_pred_tst)
-    len_test = x_pred_tst.shape[1]
-    t_test = np.arange(len_train, len_train + len_test)
+    num_test = x_pred_tst.shape[1]
+    t_test = np.arange(num_train, num_train + num_test)
 
-    t_axis = np.arange(len_train + len_test)
+    t_axis = np.arange(num_train + num_test)
     w_pred = posterior_predictive["weight"]
     w_hpdi = diagnostics.hpdi(w_pred)
 
@@ -157,9 +158,9 @@ def main() -> None:
     predictive = infer.Predictive(
         model, posterior_samples=posterior_given, return_sites=["x", "weight"]
     )
-    posterior_predictive = predictive(rng_key_posterior, covariates, x_train)
+    posterior_predictive = predictive(rng_key_posterior, covariates)
 
-    _save_results(x, betas, prior_samples, posterior_samples, posterior_predictive)
+    _save_results(x, betas, prior_samples, posterior_samples, posterior_predictive, num_train)
 
 
 if __name__ == "__main__":
