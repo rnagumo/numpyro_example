@@ -95,8 +95,9 @@ def _save_results(
     len_test = x_pred_tst.shape[1]
     t_test = np.arange(len_train, len_train + len_test)
 
-    w_pred_trn = posterior_samples["weight"]
-    w_hpdi_trn = diagnostics.hpdi(w_pred_trn)
+    t_axis = np.arange(len_train + len_test)
+    w_pred = posterior_predictive["weight"]
+    w_hpdi = diagnostics.hpdi(w_pred)
 
     prop_cycle = plt.rcParams['axes.prop_cycle']
     colors = prop_cycle.by_key()['color']
@@ -118,10 +119,9 @@ def _save_results(
             plt.title("ground truth", fontsize=16)
         else:
             plt.plot(betas[:, 0, i - 1], label="ground truth", color=colors[0])
-            plt.plot(t_train, w_pred_trn.mean(0)[:, i - 1], label="prediction", color=colors[1])
+            plt.plot(t_axis, w_pred.mean(0)[:, i - 1], label="prediction", color=colors[1])
             plt.fill_between(
-                t_train, w_hpdi_trn[0, :, i - 1, 0], w_hpdi_trn[1, :, i - 1, 0], alpha=0.3,
-                color=colors[1]
+                t_axis, w_hpdi[0, :, i - 1, 0], w_hpdi[1, :, i - 1, 0], alpha=0.3, color=colors[1]
             )
             plt.title(f"coef_{i - 1}", fontsize=16)
         plt.legend(loc="upper left")
@@ -154,7 +154,9 @@ def main() -> None:
     # Posterior prediction
     posterior_given = posterior_samples.copy()
     posterior_given.pop("weight")
-    predictive = infer.Predictive(model, posterior_samples=posterior_given)
+    predictive = infer.Predictive(
+        model, posterior_samples=posterior_given, return_sites=["x", "weight"]
+    )
     posterior_predictive = predictive(rng_key_posterior, covariates, x_train)
 
     _save_results(x, betas, prior_samples, posterior_samples, posterior_predictive)
