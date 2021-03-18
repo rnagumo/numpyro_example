@@ -32,8 +32,13 @@ def model(
     season_trans = jax.ops.index_add(jnp.eye(seasonality - 1, k=-1), 0, -1)
     season_var = numpyro.sample("season_var", dist.LogNormal(-5, 5))
 
-    weight = numpyro.sample(
-        "weight", dist.Normal(np.zeros((c_dim, x_dim)), np.ones((c_dim, x_dim)) * 0.1)
+    trend_trans = jnp.array([[1, 1], [0, 1]])
+    trend_var = numpyro.sample(
+        "trend_var", dist.LogNormal(jnp.array([-5, -5]), jnp.array([5, 5]))
+    )
+
+    weight_var = numpyro.sample(
+        "weight_var", dist.LogNormal(-5 * jnp.ones((c_dim, x_dim)), 5 * jnp.ones((c_dim, x_dim)))
     )
     sigma = numpyro.sample("sigma", dist.LogNormal(-5 * np.ones(x_dim), 5 * np.ones(x_dim)))
 
@@ -41,7 +46,7 @@ def model(
         carry: Tuple[jnp.ndarray], t: jnp.ndarray
     ) -> Tuple[Tuple[jnp.ndarray], jnp.ndarray]:
 
-        z_prev, s_prev = carry
+        z_prev, s_prev, t_prev, w_prev = carry
 
         z = numpyro.sample("z", dist.Normal(z_prev, jnp.ones(z_dim)))
 
@@ -49,16 +54,22 @@ def model(
         s0 = numpyro.sample("s0", dist.Normal(s[:, 0], season_var))
         s = jax.ops.index_update(s, jax.ops.index[:, 0], s0)
 
+        trend_mu = jnp.matmul(t_prev, trend_trans.T)
+        trend = numpyro.sample("trend", dist.Normal(trend_mu, trend_var))
+
+        weight = numpyro.sample("weight", dist.Normal(w_prev, weight_var))
         exogenous = jnp.matmul(covariates[t], weight)
 
-        numpyro.sample("x", dist.Normal(z.sum(-1) + s0 + exogenous, sigma))
+        numpyro.sample("x", dist.Normal(z.sum(-1) + s0 + trend[:, 0] + exogenous, sigma))
 
-        return (z, s), None
+        return (z, s, trend, weight), None
 
     z_init = jnp.zeros((batch, z_dim))
     s_init = jnp.zeros((batch, seasonality - 1))
+    t_init = jnp.zeros((batch, 2))
+    w_init = jnp.zeros((c_dim, x_dim))
     with numpyro.handlers.condition(data={"x": x}):
-        scan(transition_fn, (z_init, s_init), jnp.arange(seq_len))
+        scan(transition_fn, (z_init, s_init, t_init, w_init), jnp.arange(seq_len))
 
 
 def _load_data(
@@ -66,17 +77,15 @@ def _load_data(
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Load sequential data with seasonality and trend."""
 
-    t = jnp.array(np.random.rand(7 * num_seasons).cumsum(0)[:, None, None])
+    t = jnp.sin(jnp.arange(0, 6 * jnp.pi, step=6 * jnp.pi / 700))[:, None, None]
 
     x = dist.Poisson(100).sample(random.PRNGKey(1234), (7 * num_seasons, batch, x_dim))
-    x += t
+    x += jnp.array(np.random.rand(7 * num_seasons).cumsum(0)[:, None, None])
     x += (
         jnp.array(([50] * 5 + [1] * 2) * num_seasons)[:, None, None]
     )
     x = jnp.log1p(x)
-
-    t = jnp.arange(len(x))[:, None, None]
-    t = t.repeat(batch, axis=1)
+    x += t * 2
 
     assert isinstance(x, jnp.ndarray)
     assert isinstance(t, jnp.ndarray)
@@ -128,7 +137,7 @@ def _save_results(
         t_test, x_hpdi_tst[0, :, 0, 0], x_hpdi_tst[1, :, 0, 0], alpha=0.3, color=colors[2]
     )
 
-    plt.ylim(4, 8)
+    plt.ylim(x.min() - 0.5, x.max() + 0.5)
     plt.legend()
     plt.tight_layout()
     plt.savefig(root / "prediction.png")
@@ -157,7 +166,11 @@ def main() -> None:
     posterior_samples = mcmc.get_samples()
 
     # Posterior prediction
-    predictive = infer.Predictive(model, posterior_samples=posterior_samples)
+    predictive = infer.Predictive(
+        model,
+        posterior_samples=posterior_samples,
+        return_sites=["x", "s0", "z", "trend", "weight"],
+    )
     posterior_predictive = predictive(rng_key_posterior, t)
 
     _save_results(x, prior_samples, posterior_samples, posterior_predictive, num_train)
