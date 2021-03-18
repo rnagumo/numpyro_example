@@ -47,7 +47,6 @@ def pca_regression(
 
     with numpyro.plate("batch", batch, dim=-2):
         z = numpyro.sample("z", dist.Normal(jnp.zeros(z_dim), jnp.ones(z_dim)))
-        numpyro.sample("x_sample", dist.Normal(jnp.matmul(z, phi) + eta, x_std))
         numpyro.sample("x", dist.Normal(jnp.matmul(z, phi) + eta, x_std).mask(mask), obs=x)
 
     numpyro.sample("y", dist.Normal(jnp.matmul(z, theta), sigma), obs=y)
@@ -101,7 +100,7 @@ def _save_results(
     # Prediction
     y_pred = posterior_predictive["y"]
     y_hpdi = diagnostics.hpdi(y_pred)
-    train_len = int(len(y) * 0.99)
+    train_len = int(len(y) * 0.8)
 
     prop_cycle = plt.rcParams["axes.prop_cycle"]
     colors = prop_cycle.by_key()["color"]
@@ -121,7 +120,7 @@ def main(args: argparse.Namespace) -> None:
 
     _, y, x_missing = _load_dataset()
     batch, x_dim = x_missing.shape
-    train_len = int(len(y) * 0.99)
+    train_len = int(len(y) * 0.8)
     x_train = x_missing[:train_len]
     y_train = y[:train_len]
 
@@ -146,7 +145,7 @@ def main(args: argparse.Namespace) -> None:
     posterior_without_z = posterior_samples.copy()
     posterior_without_z.pop("z")
     predictive = infer.Predictive(pca_regression, posterior_samples=posterior_without_z)
-    posterior_predictive = predictive(rng_key_pca_pred, x_missing)
+    posterior_predictive = predictive(rng_key_pca_pred, batch=batch, x_dim=x_dim)
 
     _save_results(
         y,
