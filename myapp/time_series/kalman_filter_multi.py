@@ -14,9 +14,10 @@ from numpyro.contrib.control_flow import scan
 
 def model(
     x: Optional[jnp.ndarray] = None,
-    future_steps: int = 0,
+    seq_len: int = 0,
     batch: int = 0,
     x_dim: int = 1,
+    future_steps: int = 0,
     z_dim: int = 3,
 ) -> None:
     """Simple Kalman filter model (random walk).
@@ -30,8 +31,6 @@ def model(
 
     if x is not None:
         seq_len, batch, x_dim = x.shape
-    else:
-        seq_len = 0
 
     trans = numpyro.sample(
         "trans", dist.Normal(jnp.zeros((z_dim, z_dim)), jnp.ones((z_dim, z_dim)))
@@ -49,7 +48,6 @@ def model(
         z_prev, *_ = carry
         z = numpyro.sample("z", dist.Normal(jnp.matmul(z_prev, trans), z_std))
         numpyro.sample("x", dist.Normal(jnp.matmul(z, emit), x_std))
-        numpyro.sample("x_sample", dist.Normal(jnp.matmul(z, emit), x_std))
         return (z,), None
 
     z_init = jnp.zeros((batch, z_dim))
@@ -84,6 +82,7 @@ def _save_results(
     prior_samples: Dict[str, jnp.ndarray],
     posterior_samples: Dict[str, jnp.ndarray],
     posterior_predictive: Dict[str, jnp.ndarray],
+    num_train: int,
 ) -> None:
 
     root = pathlib.Path("./data/kalman_multi")
@@ -93,13 +92,16 @@ def _save_results(
     jnp.savez(root / "posterior_samples.npz", **posterior_samples)
     jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
-    x_pred_trn = posterior_samples["x_sample"]
-    x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
-    len_train = x_pred_trn.shape[1]
+    x_pred = posterior_predictive["x"]
 
-    x_pred_tst = posterior_predictive["x"][:, len_train:]
+    x_pred_trn = x_pred[:, :num_train]
+    x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
+    t_train = np.arange(num_train)
+
+    x_pred_tst = x_pred[:, num_train:]
     x_hpdi_tst = diagnostics.hpdi(x_pred_tst)
-    len_test = x_pred_tst.shape[1]
+    num_test = x_pred_tst.shape[1]
+    t_test = np.arange(num_train, num_train + num_test)
 
     prop_cycle = plt.rcParams['axes.prop_cycle']
     colors = prop_cycle.by_key()['color']
@@ -109,13 +111,11 @@ def _save_results(
     plt.subplot(211)
     plt.plot(x[..., 0, 0], label="ground truth", color=colors[0])
 
-    t_train = np.arange(len_train)
     plt.plot(t_train, x_pred_trn[..., 0, 0].mean(0), label="prediction", color=colors[1])
     plt.fill_between(
         t_train, x_hpdi_trn[0, :, 0, 0], x_hpdi_trn[1, :, 0, 0], alpha=0.3, color=colors[1]
     )
 
-    t_test = np.arange(len_train, len_train + len_test)
     plt.plot(t_test, x_pred_tst[..., 0, 0].mean(0), label="forecast", color=colors[2])
     plt.fill_between(
         t_test, x_hpdi_tst[0, :, 0, 0], x_hpdi_tst[1, :, 0, 0], alpha=0.3, color=colors[2]
@@ -126,13 +126,11 @@ def _save_results(
     plt.subplot(212)
     plt.plot(x[..., 0, 1], label="ground truth", color=colors[0])
 
-    t_train = np.arange(len_train)
     plt.plot(t_train, x_pred_trn[..., 0, 1].mean(0), label="prediction", color=colors[1])
     plt.fill_between(
         t_train, x_hpdi_trn[0, :, 0, 1], x_hpdi_trn[1, :, 0, 1], alpha=0.3, color=colors[1]
     )
 
-    t_test = np.arange(len_train, len_train + len_test)
     plt.plot(t_test, x_pred_tst[..., 0, 1].mean(0), label="forecast", color=colors[2])
     plt.fill_between(
         t_test, x_hpdi_tst[0, :, 0, 1], x_hpdi_tst[1, :, 0, 1], alpha=0.3, color=colors[2]
@@ -154,7 +152,7 @@ def main() -> None:
 
     # prior
     predictive = infer.Predictive(model, num_samples=10)
-    prior_samples = predictive(rng_key_prior, future_steps=20, batch=10, x_dim=2)
+    prior_samples = predictive(rng_key_prior, None, *x.shape, future_steps=20)
 
     # Inference
     kernel = infer.NUTS(model)
@@ -164,9 +162,9 @@ def main() -> None:
 
     # Posterior prediction
     predictive = infer.Predictive(model, posterior_samples=posterior_samples)
-    posterior_predictive = predictive(rng_key_posterior, x, future_steps=10)
+    posterior_predictive = predictive(rng_key_posterior, None, *x.shape, future_steps=20)
 
-    _save_results(x, prior_samples, posterior_samples, posterior_predictive)
+    _save_results(x, prior_samples, posterior_samples, posterior_predictive, len(x))
 
 
 if __name__ == "__main__":
