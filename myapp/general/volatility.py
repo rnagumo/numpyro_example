@@ -7,8 +7,8 @@ import pathlib
 from typing import Dict
 
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
@@ -19,7 +19,7 @@ from numpyro.examples import datasets
 
 def model(returns: np.ndarray) -> None:
 
-    step_size = numpyro.sample("sigma", dist.Exponential(50.))
+    step_size = numpyro.sample("sigma", dist.Exponential(50.0))
     s = numpyro.sample(
         "s", dist.GaussianRandomWalk(scale=step_size, num_steps=jnp.shape(returns)[0])
     )

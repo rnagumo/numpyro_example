@@ -65,7 +65,7 @@ def main() -> None:
 
     samples = run_inference(model, rng_key)
     reparam_samples = run_inference(reparam_model, rng_key)
-    
+
     predictive = infer.Predictive(reparam_model, reparam_samples, return_sites=["x", "y"])
     reparam_samples = predictive(random.PRNGKey(1))
 

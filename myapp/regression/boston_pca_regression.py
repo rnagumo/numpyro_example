@@ -68,9 +68,9 @@ def _load_dataset(missing_rate: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np
 def _save_results(
     y: np.ndarray,
     mcmc: infer.MCMC,
-    prior: Optional[Dict[str, jnp.ndarray]] = None,
-    posterior_samples: Optional[Dict[str, jnp.ndarray]] = None,
-    posterior_predictive: Optional[Dict[str, jnp.ndarray]] = None,
+    prior: Dict[str, jnp.ndarray],
+    posterior_samples: Dict[str, jnp.ndarray],
+    posterior_predictive: Dict[str, jnp.ndarray],
     *,
     var_names: Optional[List[str]] = None,
 ) -> None:

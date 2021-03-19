@@ -1,7 +1,6 @@
 import pathlib
 from typing import Dict, Optional, Tuple
 
-import arviz as az
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -69,8 +68,8 @@ def _save_results(
     x_hpdi_tst = diagnostics.hpdi(x_pred_tst)
     len_test = x_pred_tst.shape[1]
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 6))
     plt.plot(x.ravel(), label="ground truth", color=colors[0])
@@ -95,12 +94,14 @@ def _save_results(
 
 def main() -> None:
 
-    x = jnp.concatenate([
-        np.random.randn(10),
-        np.random.randn(10) + 2,
-        np.random.randn(10) - 1,
-        np.random.randn(10) + 1
-    ])
+    x = jnp.concatenate(
+        [
+            np.random.randn(10),
+            np.random.randn(10) + 2,
+            np.random.randn(10) - 1,
+            np.random.randn(10) + 1,
+        ]
+    )
     x = x[:, None, None]
 
     rng_key = random.PRNGKey(0)

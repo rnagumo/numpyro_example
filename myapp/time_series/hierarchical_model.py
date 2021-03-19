@@ -4,9 +4,8 @@ https://pyro.ai/examples/forecasting_iii.html
 """
 
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
-import arviz as az
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
@@ -37,13 +36,9 @@ def model(
         "trans_var", dist.LogNormal(-20 * jnp.ones((z_dim, z_dim)), 20 * jnp.ones((z_dim, z_dim)))
     )
     with numpyro.plate("batch", batch, dim=-3):
-        trans = numpyro.sample(
-            "trans", dist.Normal(trans_mu, trans_var).expand((1, z_dim, z_dim))
-        )
+        trans = numpyro.sample("trans", dist.Normal(trans_mu, trans_var).expand((1, z_dim, z_dim)))
 
-    emit = numpyro.sample(
-        "emit", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim)))
-    )
+    emit = numpyro.sample("emit", dist.Normal(jnp.zeros((z_dim, x_dim)), jnp.ones((z_dim, x_dim))))
     z_std = numpyro.sample("z_std", dist.Gamma(jnp.ones(z_dim), jnp.ones(z_dim)))
     x_std = numpyro.sample("x_std", dist.Gamma(jnp.ones(x_dim), jnp.ones(x_dim)))
 
@@ -64,19 +59,23 @@ def model(
 
 def _load_dataset() -> jnp.ndarray:
     def _load_single_data() -> jnp.ndarray:
-        x0 = jnp.concatenate([
-            np.random.randn(10, 2),
-            np.random.randn(10, 2) + 1,
-            np.random.randn(10, 2) + 1.2,
-            np.random.randn(10, 2) + 2
-        ])
+        x0 = jnp.concatenate(
+            [
+                np.random.randn(10, 2),
+                np.random.randn(10, 2) + 1,
+                np.random.randn(10, 2) + 1.2,
+                np.random.randn(10, 2) + 2,
+            ]
+        )
 
-        x1 = jnp.concatenate([
-            np.random.randn(10, 2) - 0.2,
-            np.random.randn(10, 2) - 1,
-            np.random.randn(10, 2) - 2.7,
-            np.random.randn(10, 2) - 4.2
-        ])
+        x1 = jnp.concatenate(
+            [
+                np.random.randn(10, 2) - 0.2,
+                np.random.randn(10, 2) - 1,
+                np.random.randn(10, 2) - 2.7,
+                np.random.randn(10, 2) - 4.2,
+            ]
+        )
 
         x = jnp.concatenate([x0[..., None], x1[..., None]], axis=-1)
         return x
@@ -113,8 +112,8 @@ def _save_results(
     num_test = x_pred_tst.shape[1]
     t_test = np.arange(num_train, num_train + num_test)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 12))
 

@@ -112,9 +112,7 @@ def main() -> None:
     _, y, x_missing = _load_dataset()
     train_len = int(len(y) * 0.8)
     x_train = x_missing[:train_len]
-    x_test = x_missing[train_len:]
     y_train = y[:train_len]
-    y_test = y[train_len:]
 
     num_chains = 1
     numpyro.set_platform("cpu")

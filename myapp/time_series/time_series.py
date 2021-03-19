@@ -133,8 +133,12 @@ def main() -> None:
     jnp.savez(root / "posterior_samples.npz", **posterior_samples)
     jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
     plot_results(
-        df["time"].values, df["value"].values, posterior_samples, posterior_predictive, test_index,
-        root
+        df["time"].values,
+        df["value"].values,
+        posterior_samples,
+        posterior_predictive,
+        test_index,
+        root,
     )
 
 

@@ -14,7 +14,6 @@ import numpyro.distributions as dist
 from jax import random
 from numpyro import infer
 from numpyro.contrib.control_flow import scan
-from numpyro.contrib.indexing import Vindex
 from numpyro.examples.datasets import JSB_CHORALES, load_dataset
 from numpyro.handlers import mask
 

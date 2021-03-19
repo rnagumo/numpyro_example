@@ -4,7 +4,7 @@ https://pyro.ai/examples/forecasting_dlm.html
 """
 
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -32,8 +32,8 @@ def model(
     sigma = numpyro.sample("sigma", dist.LogNormal(-20 * jnp.ones(x_dim), 20 * jnp.ones(x_dim)))
 
     def transition_fn(
-        carry: Tuple[jnp.ndarray], t: jnp.ndarray,
-    ) -> Tuple[Tuple[jnp.ndarray], jnp.ndarray]:
+        carry: Tuple[jnp.ndarray, jnp.ndarray], t: jnp.ndarray,
+    ) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
 
         z_prev, w_prev = carry
         z = numpyro.sample("z", dist.Normal(z_prev, 1))
@@ -47,7 +47,7 @@ def model(
         scan(transition_fn, (z_init, w_init), jnp.arange(seq_len))
 
 
-def _load_data() -> Tuple[jnp.ndarray, jnp.ndarray]:
+def _load_data() -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
 
     p = 5
     n = 365 * 3
@@ -100,8 +100,8 @@ def _save_results(
     w_pred = posterior_predictive["weight"]
     w_hpdi = diagnostics.hpdi(w_pred)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     beta_dim = betas.shape[-1]
     plt.figure(figsize=(8, 12))

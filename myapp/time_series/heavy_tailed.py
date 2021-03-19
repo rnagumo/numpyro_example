@@ -8,7 +8,7 @@ https://www.bart.gov/about/reports/ridership
 """
 
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -64,9 +64,8 @@ def _load_data(
     rng_key = random.PRNGKey(1234)
     rng_key_0, rng_key_1 = random.split(rng_key, 2)
     x = dist.Poisson(100).sample(rng_key_0, (70 * num_seasons, batch, x_dim))
-    x += (
-        jnp.array(([1] * 65 + [50] * 5) * num_seasons)[:, None, None]
-        * random.normal(rng_key_1, (70 * num_seasons, batch, x_dim))
+    x += jnp.array(([1] * 65 + [50] * 5) * num_seasons)[:, None, None] * random.normal(
+        rng_key_1, (70 * num_seasons, batch, x_dim)
     )
 
     t = jnp.arange(len(x))[:, None, None]
@@ -85,7 +84,7 @@ def _save_results(
     prior_samples: Dict[str, jnp.ndarray],
     posterior_samples: Dict[str, jnp.ndarray],
     posterior_predictive: Dict[str, jnp.ndarray],
-    num_train: int
+    num_train: int,
 ) -> None:
 
     root = pathlib.Path("./data/heavy_tailed")
@@ -106,8 +105,8 @@ def _save_results(
     num_test = x_pred_tst.shape[1]
     t_test = np.arange(num_train, num_train + num_test)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 6))
     plt.plot(x.ravel(), label="ground truth", color=colors[0])

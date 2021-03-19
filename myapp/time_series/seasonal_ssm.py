@@ -4,7 +4,7 @@ https://pyro.ai/examples/forecasting_ii.html
 """
 
 import pathlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -28,14 +28,12 @@ def model(
     seq_len, batch, c_dim = covariates.shape
     if x is not None:
         x_dim = x.shape[-1]
-    
+
     season_trans = jax.ops.index_add(jnp.eye(seasonality - 1, k=-1), 0, -1)
     season_var = numpyro.sample("season_var", dist.LogNormal(-5, 5))
 
     trend_trans = jnp.array([[1, 1], [0, 1]])
-    trend_var = numpyro.sample(
-        "trend_var", dist.LogNormal(jnp.array([-5, -5]), jnp.array([5, 5]))
-    )
+    trend_var = numpyro.sample("trend_var", dist.LogNormal(jnp.array([-5, -5]), jnp.array([5, 5])))
 
     weight_var = numpyro.sample(
         "weight_var", dist.LogNormal(-5 * jnp.ones((c_dim, x_dim)), 5 * jnp.ones((c_dim, x_dim)))
@@ -43,8 +41,8 @@ def model(
     sigma = numpyro.sample("sigma", dist.LogNormal(-5 * np.ones(x_dim), 5 * np.ones(x_dim)))
 
     def transition_fn(
-        carry: Tuple[jnp.ndarray], t: jnp.ndarray
-    ) -> Tuple[Tuple[jnp.ndarray], jnp.ndarray]:
+        carry: Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], t: jnp.ndarray
+    ) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray], jnp.ndarray]:
 
         z_prev, s_prev, t_prev, w_prev = carry
 
@@ -74,16 +72,14 @@ def model(
 
 def _load_data(
     num_seasons: int = 100, batch: int = 1, x_dim: int = 1
-) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Load sequential data with seasonality and trend."""
 
     t = jnp.sin(jnp.arange(0, 6 * jnp.pi, step=6 * jnp.pi / 700))[:, None, None]
 
     x = dist.Poisson(100).sample(random.PRNGKey(1234), (7 * num_seasons, batch, x_dim))
     x += jnp.array(np.random.rand(7 * num_seasons).cumsum(0)[:, None, None])
-    x += (
-        jnp.array(([50] * 5 + [1] * 2) * num_seasons)[:, None, None]
-    )
+    x += jnp.array(([50] * 5 + [1] * 2) * num_seasons)[:, None, None]
     x = jnp.log1p(x)
     x += t * 2
 
@@ -121,8 +117,8 @@ def _save_results(
     num_test = x_pred_tst.shape[1]
     t_test = np.arange(num_train, num_train + num_test)
 
-    prop_cycle = plt.rcParams['axes.prop_cycle']
-    colors = prop_cycle.by_key()['color']
+    prop_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = prop_cycle.by_key()["color"]
 
     plt.figure(figsize=(12, 6))
     plt.plot(x.ravel(), label="ground truth", color=colors[0])
