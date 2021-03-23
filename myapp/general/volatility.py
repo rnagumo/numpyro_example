@@ -1,6 +1,9 @@
 """Example: Stochastic Volatility
 
 http://num.pyro.ai/en/latest/examples/stochastic_volatility.html
+
+Pyro example: Levy Stable models of Stochastic Volatility
+https://pyro.ai/examples/stable.html
 """
 
 import pathlib
