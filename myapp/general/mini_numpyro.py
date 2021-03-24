@@ -3,7 +3,7 @@
 http://pyro.ai/examples/minipyro.html
 """
 
-from collections import OrderedDict
+from collections import namedtuple, OrderedDict
 from typing import Any, Callable, Generator, Dict, Optional, Tuple, Union
 
 import jax.numpy as jnp
@@ -285,14 +285,14 @@ class TraceELBO:
 
     def loss(
         self,
-        rng_key: np.ndarray,
+        rng_key: jnp.ndarray,
         param_map: Dict[str, jnp.ndarray],
         model: Callable,
         guide: Callable,
         *args: Any,
         **kwargs: Any,
     ) -> jnp.ndarray:
-        def single_particle_elbo(rng_key: np.ndarray) -> jnp.ndarray:
+        def single_particle_elbo(rng_key: jnp.ndarray) -> jnp.ndarray:
             model_seed, guide_seed = random.split(rng_key)
             seeded_model = seed(model, model_seed)
             seeded_guide = seed(guide, guide_seed)
