@@ -1,34 +1,43 @@
 """Mini-numpyro
 
+This is re-implementation of mini-pyro with JAX. This library is independent of the rest of NumPyro
+without `nunpyro.distributions` module.
+
 http://pyro.ai/examples/minipyro.html
 """
 
+import weakref
 from collections import namedtuple, OrderedDict
-from typing import Any, Callable, Generator, Dict, Optional, Tuple, Union
+from functools import partial
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
 
 import jax.numpy as jnp
 import numpy as np
-from jax import random, vmap
+import numpyro.distributions as dist
+from jax import lax, random, tree_map, value_and_grad, vmap
+from jax.experimental import optimizers
+from numpyro.distributions import constraints
 
 
 NUMPYRO_STACK = []
-PARAM_STORE = {}
-
-
-def get_param_store():
-    return PARAM_STORE
 
 
 def apply_stack(msg: Dict[str, Any]) -> Dict[str, Any]:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/primitives.py#L21
 
+    pointer = 0
     for pointer, handler in enumerate(reversed(NUMPYRO_STACK)):
         handler.process_message(msg)
         if msg.get("stop"):
             break
 
     if msg["value"] is None:
-        msg["value"] = msg["fn"](*msg["args"])
+        if msg["type"] == "sample":
+            msg["value"], msg["intermediates"] = msg["fn"](
+                *msg["args"], sample_intermediates=True, **msg["kwargs"]
+            )
+        else:
+            msg["value"] = msg["fn"](*msg["args"], **msg["kwargs"])
 
     for handler in NUMPYRO_STACK[-pointer - 1:]:
         handler.postprocess_message(msg)
@@ -83,7 +92,7 @@ class replay(Messanger):
 
     def process_message(self, msg: Dict[str, Any]) -> None:
         if msg["type"] in ("sample", "plate") and msg["name"] in self.guide_trace:
-            msg["value"] = self.guide_trace[[msg["nane"]]]["value"]
+            msg["value"] = self.guide_trace[msg["name"]]["value"]
 
 
 class block(Messanger):
@@ -100,7 +109,12 @@ class block(Messanger):
 class seed(Messanger):
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/handlers.py#L611
     def __init__(self, fn: Callable, rng_seed: Union[int, jnp.ndarray]) -> None:
-        self.rng_key = random.PRNGKey(rng_seed)
+        if (
+            isinstance(rng_seed, int)
+            or (isinstance(rng_seed, jnp.ndarray) and not jnp.shape(rng_seed))
+        ):
+            rng_seed = random.PRNGKey(rng_seed)
+        self.rng_key = rng_seed
         super().__init__(fn=fn)
 
     def process_message(self, msg: Dict[str, Any]) -> None:
@@ -149,6 +163,9 @@ class substitute(Messanger):
             msg["value"] = value
 
 
+CondIndepStackFrame = namedtuple("CondIndepStackFrame", ["name", "dim", "size"])
+
+
 class plate(Messanger):
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/primitives.py#L320
     def __init__(self, name: str, size: int, dim: Optional[int]) -> None:
@@ -158,33 +175,61 @@ class plate(Messanger):
         self.dim = dim
         super().__init__()
 
-    def process_message(self, msg: Dict[str, Any]) -> None:
-        if msg["type"] == "sample":
-            batch_shape = msg["fn"].batch_shape
-            if len(batch_shape) < -self.dim or batch_shape[self.dim] != self.size:
-                batch_shape = [1] * (-self.dim - len(batch_shape)) + list(batch_shape)
-                batch_shape[self.dim] = self.size
-                msg["fn"] = msg["fn"].expand(batch_shape)
+    @staticmethod
+    def _get_batch_shape(cond_indep_stack: jnp.ndarray) -> Tuple[int, ...]:
+        n_dims = max(-f.dim for f in cond_indep_stack)
+        batch_shape = [1] * n_dims
+        for f in cond_indep_stack:
+            batch_shape[f.dim] = f.size
+        return tuple(batch_shape)
 
-    def __iter__(self) -> Generator:
-        return range(self.size)
+    def process_message(self, msg: Dict[str, Any]) -> None:
+        cond_indep_stack = msg["cond_indep_stack"]
+        frame = CondIndepStackFrame(self.name, self.dim, self.size)
+        cond_indep_stack.append(frame)
+        if msg["type"] == "sample":
+            expected_shape = self._get_batch_shape(cond_indep_stack)
+            dist_batch_shape = msg["fn"].batch_shape
+            if "sample_shape" in msg["kwargs"]:
+                dist_batch_shape = msg["kwargs"]["sample_shape"] + dist_batch_shape
+                msg["kwargs"]["sample_shape"] = ()
+
+            overlap_idx = max(len(expected_shape) - len(dist_batch_shape), 0)
+            trailing_shape = expected_shape[overlap_idx:]
+            broadcast_shape = lax.broadcast_shapes(trailing_shape, tuple(dist_batch_shape))
+            batch_shape = expected_shape[:overlap_idx] + broadcast_shape
+            msg["fn"] = msg["fn"].expand(batch_shape)
 
 
 def sample(
-    name: str, fn: callable, obs: Optional[np.ndarray] = None, *args: Any, **kwargs: Any
+    name: str,
+    fn: callable,
+    obs: Optional[np.ndarray] = None,
+    rng_key: Optional[jnp.ndarray] = None,
+    sample_shape: Tuple[int, ...] = (),
+    infer: Optional[Dict[str, Any]] = None,
+    obs_mask: Optional[np.ndarray] = None,
 ) -> Any:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/primitives.py#L97
 
     if not NUMPYRO_STACK:
-        return fn(*args, **kwargs)
+        return fn(rng_key=rng_key, sample_shape=sample_shape)
+
+    if obs_mask is not None:
+        raise NotImplementedError
 
     initial_msg = {
         "type": "sample",
         "name": name,
         "fn": fn,
-        "args": args,
-        "kwargs": kwargs,
+        "args": (),
+        "kwargs": {"rng_key": rng_key, "sample_shape": sample_shape},
         "value": obs,
+        "scale": None,
+        "is_observed": obs is not None,
+        "intermediates": [],
+        "cond_indep_stack": [],
+        "infer": {} if infer is None else infer,
     }
 
     msg = apply_stack(initial_msg)
@@ -226,6 +271,8 @@ def param(
     if callable(init_value):
         def fn(init_fn: Callable, *args, **kwargs):
             return init_fn(prng_key())
+    else:
+        fn = identity
 
     initial_msg = {
         "type": "param",
@@ -277,7 +324,7 @@ def log_density(
     return log_joint, model_trace
 
 
-class TraceELBO:
+class Trace_ELBO:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/infer/elbo.py#L17
 
     def __init__(self, num_particles: int = 1) -> None:
@@ -308,3 +355,245 @@ class TraceELBO:
         else:
             rng_keys = random.split(rng_key, self.num_particles)
             return -jnp.mean(vmap(single_particle_elbo)(rng_keys))
+
+
+class ConstraintRegistry:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L839
+    def __init__(self) -> None:
+        self._registry = {}
+
+    def register(self, constraint, factory: Optional[Callable] = None) -> Optional[Callable]:
+        if factory is None:
+            return lambda factory: self.register(constraint, factory)
+
+        if isinstance(constraint, constraints.Constraint):
+            constraint = type(constraint)
+
+        self._registry[constraint] = factory
+
+    def __call__(self, constraint) -> Any:
+        try:
+            factory = self._registry[type(constraint)]
+        except KeyError as e:
+            raise NotImplementedError from e
+
+        return factory(constraint)
+
+
+biject_to = ConstraintRegistry()
+
+
+class Transform:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L51
+    domain = constraints.real
+    codomain = constraints.real
+    _inv = None
+
+    @property
+    def inv(self):
+        inv = None
+        if self._inv is not None:
+            inv = self._inv()
+        if inv is None:
+            inv = _InverseTransform(self)
+            self._inv = weakref.ref(inv)
+        return inv
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        raise NotImplementedError
+
+    def _inverse(self, y: jnp.ndarray) -> jnp.ndarray:
+        raise NotImplementedError
+
+    def log_abs_det_jacobian(
+        self, x: jnp.ndarray, y: jnp.ndarray, intermediates: Any = None
+    ) -> jnp.ndarray:
+        raise NotImplementedError
+
+
+class _InverseTransform(Transform):
+    def __init__(self, transform: Transform) -> None:
+        super().__init__()
+        self._inv = transform
+
+    @property
+    def domain(self) -> Any:
+        return self._inv.codomain
+
+    @property
+    def codomain(self) -> Any:
+        return self._inv.domain
+
+    @property
+    def inv(self) -> Any:
+        return self._inv
+
+    def __call__(self, x: jnp.ndarray) -> Any:
+        return self._inv._inverse(x)
+
+
+class IdentityTransform(Transform):
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L450
+
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        return x
+
+    def _inverse(self, y: jnp.ndarray) -> jnp.ndarray:
+        return y
+
+    def log_abs_det_jacobian(
+        self, x: jnp.ndarray, y: jnp.ndarray, intermediates: Any = None
+    ) -> jnp.ndarray:
+        return jnp.zeros_like(x)
+
+
+@biject_to.register(constraints.real)
+def _transform_to_real(constraint) -> Any:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L927
+    return IdentityTransform()
+
+
+_Params = TypeVar("_Params")
+_OptState = TypeVar("_OptState")
+_IterOptState = TypeVar("_IterOptState")
+
+
+class _NumpyroOptim:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/optim.py#L37
+    def __init__(self, optim_fn: Callable, *args: Any, **kwargs: Any) -> None:
+        self.init_fn, self.update_fn, self.get_params_fn = optim_fn(*args, **kwargs)
+
+    def init(self, params: _Params) -> _IterOptState:
+        opt_state = self.init_fn(params)
+        return jnp.array(0), opt_state
+
+    def update(self, g: _Params, state: _IterOptState) -> _IterOptState:
+        i, opt_state = state
+        opt_state = self.update_fn(i, g, opt_state)
+        return i + 1, opt_state
+
+    def eval_and_update(self, fn: Callable, state: _IterOptState) -> _IterOptState:
+        params = self.get_params(state)
+        out, grads = value_and_grad(fn)(params)
+        return out, self.update(grads, state)
+
+    def get_params(self, state: _IterOptState) -> _Params:
+        _, opt_state = state
+        return self.get_params_fn(opt_state)
+
+
+class Adam(_NumpyroOptim):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(optimizers.adam, *args, **kwargs)
+
+
+SVIState = namedtuple("SVIState", ["optim_state", "rng_key"])
+
+
+def _apply_loss_fn(
+    loss_fn: Callable,
+    rng_key: jnp.ndarray,
+    constrain_fn: Callable,
+    model: Callable,
+    guide: Callable,
+    args: Any,
+    kwargs: Dict[str, Any],
+    static_kwargs: Dict[str, Any],
+    params: Dict[str, Any],
+) -> Any:
+    return loss_fn(rng_key, constrain_fn(params), model, guide, *args, **kwargs, **static_kwargs)
+
+
+def transform_fn(
+    transforms: Dict[str, Any], params: Dict[str, jnp.ndarray], invert: bool = False
+) -> Dict[str, Any]:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/infer/util.py#L69
+
+    if invert:
+        transforms = {k: v.inv for k, v in transforms.items()}
+    return {k: transforms[k](v) if k in transforms else v for k, v in params.items()}
+
+
+class SVI:
+    # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/infer/svi.py#L37
+
+    def __init__(
+        self,
+        model: Callable,
+        guide: Callable,
+        optim: _NumpyroOptim,
+        loss: Trace_ELBO,
+        **static_kwargs: Any,
+    ) -> None:
+
+        self.model = model
+        self.guide = guide
+        self.optim = optim
+        self.loss = loss
+        self.static_kwargs = static_kwargs
+        self.constrain_fn = None
+
+    def init(self, rng_key: jnp.ndarray, *args: Any, **kwargs: Any) -> SVIState:
+        rng_key, model_seed, guide_seed = random.split(rng_key, 3)
+        model_init = seed(self.model, model_seed)
+        guide_init = seed(self.guide, guide_seed)
+        guide_trace = trace(guide_init).get_trace(*args, **kwargs, **self.static_kwargs)
+        model_trace = trace(replay(model_init, guide_trace)).get_trace(
+            *args, **kwargs, **self.static_kwargs
+        )
+
+        params = {}
+        inv_transforms = {}
+        for site in list(model_trace.values()) + list(guide_trace.values()):
+            if site["type"] == "param":
+                constraint = site["kwargs"].pop("constraint", constraints.real)
+                transform = biject_to(constraint)
+                inv_transforms[site["name"]] = transform
+                params[site["name"]] = transform.inv(site["value"])
+
+        self.constrain_fn = partial(transform_fn, inv_transforms)
+        params = tree_map(lambda x: lax.convert_element_type(x, jnp.result_type(x)), params)
+
+        return SVIState(self.optim.init(params), rng_key)
+
+    def update(
+        self, svi_state: SVIState, *args: Any, **kwargs: Any
+    ) -> Tuple[SVIState, jnp.ndarray]:
+
+        rng_key, rng_key_step = random.split(svi_state.rng_key)
+        loss_fn = partial(
+            _apply_loss_fn, self.loss.loss, rng_key_step, self.constrain_fn, self.model,
+            self.guide, args, kwargs, self.static_kwargs
+        )
+        loss_val, optim_state = self.optim.eval_and_update(loss_fn, svi_state.optim_state)
+
+        return SVIState(optim_state, rng_key), loss_val
+
+
+def main(num_epochs: int = 5) -> None:
+    # https://github.com/pyro-ppl/pyro/blob/dev/examples/minipyro.py
+
+    def model(data: jnp.ndarray) -> None:
+        loc = sample("loc", dist.Normal(0, 1))
+        with plate("data", len(data), dim=-1):
+            sample("obs", dist.Normal(loc, 1), obs=data)
+
+    def guide(data: jnp.ndarray) -> None:
+        guide_loc = param("guide_loc", jnp.array(0.0))
+        guide_scale = jnp.exp(param("guide_scale_log", jnp.array(0.0)))
+        sample("loc", dist.Normal(guide_loc, guide_scale))
+
+    rng_key = random.PRNGKey(0)
+    rng_key, rng_key_init = random.split(rng_key)
+
+    data = jnp.array(np.random.randn(100) + 3.0)
+    svi = SVI(model, guide, Adam(0.001), Trace_ELBO())
+    svi_state = svi.init(rng_key_init, data)
+
+    for epoch in range(1, num_epochs + 1):
+        svi_state, loss = svi.update(svi_state, data)
+        print(epoch, loss)
+
+
+if __name__ == "__main__":
+    main()
