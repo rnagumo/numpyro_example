@@ -6,10 +6,11 @@ without `nunpyro.distributions` module.
 http://pyro.ai/examples/minipyro.html
 """
 
+import collections
 import weakref
-from collections import namedtuple, OrderedDict
+from collections import namedtuple
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,8 +19,7 @@ from jax import lax, random, tree_map, value_and_grad, vmap
 from jax.experimental import optimizers
 from numpyro.distributions import constraints
 
-
-NUMPYRO_STACK = []
+NUMPYRO_STACK: List["Messanger"] = []
 
 
 def apply_stack(msg: Dict[str, Any]) -> Dict[str, Any]:
@@ -39,7 +39,7 @@ def apply_stack(msg: Dict[str, Any]) -> Dict[str, Any]:
         else:
             msg["value"] = msg["fn"](*msg["args"], **msg["kwargs"])
 
-    for handler in NUMPYRO_STACK[-pointer - 1:]:
+    for handler in NUMPYRO_STACK[-pointer - 1 :]:
         handler.postprocess_message(msg)
 
     return msg
@@ -50,8 +50,9 @@ class Messanger:
     def __init__(self, fn: Optional[Callable] = None) -> None:
         self.fn = fn
 
-    def __enter__(self) -> None:
+    def __enter__(self) -> Optional[OrderedDict]:
         NUMPYRO_STACK.append(self)
+        return None
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         assert NUMPYRO_STACK[-1] is self
@@ -65,14 +66,15 @@ class Messanger:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         with self:
+            assert callable(self.fn)
             return self.fn(*args, **kwargs)
 
 
 class trace(Messanger):
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/handlers.py#L110
-    def __enter__(self) -> OrderedDict:
+    def __enter__(self) -> Optional[OrderedDict]:
         super().__enter__()
-        self.trace = OrderedDict()
+        self.trace: OrderedDict[str, Any] = collections.OrderedDict()
         return self.trace
 
     def postprocess_message(self, msg: Dict[str, Any]) -> None:
@@ -109,9 +111,8 @@ class block(Messanger):
 class seed(Messanger):
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/handlers.py#L611
     def __init__(self, fn: Callable, rng_seed: Union[int, jnp.ndarray]) -> None:
-        if (
-            isinstance(rng_seed, int)
-            or (isinstance(rng_seed, jnp.ndarray) and not jnp.shape(rng_seed))
+        if isinstance(rng_seed, int) or (
+            isinstance(rng_seed, jnp.ndarray) and not jnp.shape(rng_seed)
         ):
             rng_seed = random.PRNGKey(rng_seed)
         self.rng_key = rng_seed
@@ -119,12 +120,8 @@ class seed(Messanger):
 
     def process_message(self, msg: Dict[str, Any]) -> None:
         if (
-            (
-                msg["type"] == "sample" and not msg["is_observed"]
-                and msg["kwargs"]["rng_key"] is None
-            )
-            or msg["type"] in ["prng_key", "plate", "control_flow"]
-        ):
+            msg["type"] == "sample" and not msg["is_observed"] and msg["kwargs"]["rng_key"] is None
+        ) or msg["type"] in ["prng_key", "plate", "control_flow"]:
             if msg["value"] is not None:
                 return
             self.rng_key, rng_key_sample = random.split(self.rng_key)
@@ -134,7 +131,8 @@ class seed(Messanger):
 class substitute(Messanger):
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/handlers.py#L671
     def __init__(
-        self, fn: Optional[Callable],
+        self,
+        fn: Optional[Callable],
         data: Dict[str, np.ndarray],
         substitute_fn: Optional[Callable] = None,
     ) -> None:
@@ -143,10 +141,7 @@ class substitute(Messanger):
         super().__init__(fn=fn)
 
     def process_message(self, msg: Dict[str, Any]) -> None:
-        if (
-            msg["type"] not in ("sample", "param", "plate")
-            or msg.get("_control_flow_done", False)
-        ):
+        if msg["type"] not in ("sample", "param", "plate") or msg.get("_control_flow_done", False):
             if msg["type"] == "control_flow":
                 if self.data is not None:
                     msg["kwargs"]["substitute_stack"].append(("substitute", self.data))
@@ -158,7 +153,7 @@ class substitute(Messanger):
             value = self.data.get(msg["name"])
         else:
             value = self.substitute_fn(msg)
-        
+
         if value is not None:
             msg["value"] = value
 
@@ -203,7 +198,7 @@ class plate(Messanger):
 
 def sample(
     name: str,
-    fn: callable,
+    fn: Callable,
     obs: Optional[np.ndarray] = None,
     rng_key: Optional[jnp.ndarray] = None,
     sample_shape: Tuple[int, ...] = (),
@@ -268,9 +263,12 @@ def param(
         assert not callable(init_value)
         return init_value
 
+    fn: Callable[[Any, Any, Any], Any]
     if callable(init_value):
-        def fn(init_fn: Callable, *args, **kwargs):
+
+        def fn(init_fn: Callable, *args: Any, **kwargs: Any) -> Any:
             return init_fn(prng_key())
+
     else:
         fn = identity
 
@@ -301,7 +299,7 @@ def log_density(
     model: Callable, model_args: Tuple[Any, ...], model_kwargs: Dict[str, Any], params: jnp.ndarray
 ) -> Tuple[jnp.ndarray, OrderedDict]:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/infer/util.py#L36
-    
+
     model = substitute(model, data=params)
     model_trace = trace(model).get_trace(*model_args, **model_kwargs)
     log_joint = jnp.zeros(())
@@ -344,8 +342,8 @@ class Trace_ELBO:
             seeded_model = seed(model, model_seed)
             seeded_guide = seed(guide, guide_seed)
             guide_log_density, guide_trace = log_density(seeded_guide, args, kwargs, param_map)
-            seeded_model = replay(seeded_model, guide_trace)
-            model_log_density, _ = log_density(seeded_model, args, kwargs, param_map)
+            replayed_model = replay(seeded_model, guide_trace)
+            model_log_density, _ = log_density(replayed_model, args, kwargs, param_map)
 
             elbo = model_log_density - guide_log_density
             return elbo
@@ -360,9 +358,11 @@ class Trace_ELBO:
 class ConstraintRegistry:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L839
     def __init__(self) -> None:
-        self._registry = {}
+        self._registry: Dict[constraints.Constraint, Callable] = {}
 
-    def register(self, constraint, factory: Optional[Callable] = None) -> Optional[Callable]:
+    def register(
+        self, constraint: constraints.Constraint, factory: Optional[Callable] = None
+    ) -> Optional[Callable]:
         if factory is None:
             return lambda factory: self.register(constraint, factory)
 
@@ -370,8 +370,9 @@ class ConstraintRegistry:
             constraint = type(constraint)
 
         self._registry[constraint] = factory
+        return None
 
-    def __call__(self, constraint) -> Any:
+    def __call__(self, constraint: constraints.Constraint) -> Any:
         try:
             factory = self._registry[type(constraint)]
         except KeyError as e:
@@ -387,10 +388,10 @@ class Transform:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L51
     domain = constraints.real
     codomain = constraints.real
-    _inv = None
+    _inv: Optional[Callable] = None
 
     @property
-    def inv(self):
+    def inv(self) -> Callable:
         inv = None
         if self._inv is not None:
             inv = self._inv()
@@ -414,7 +415,7 @@ class Transform:
 class _InverseTransform(Transform):
     def __init__(self, transform: Transform) -> None:
         super().__init__()
-        self._inv = transform
+        self._inv: Transform = transform
 
     @property
     def domain(self) -> Any:
@@ -448,14 +449,9 @@ class IdentityTransform(Transform):
 
 
 @biject_to.register(constraints.real)
-def _transform_to_real(constraint) -> Any:
+def _transform_to_real(constraint: constraints.Constraint) -> Any:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/distributions/transforms.py#L927
     return IdentityTransform()
-
-
-_Params = TypeVar("_Params")
-_OptState = TypeVar("_OptState")
-_IterOptState = TypeVar("_IterOptState")
 
 
 class _NumpyroOptim:
@@ -463,21 +459,25 @@ class _NumpyroOptim:
     def __init__(self, optim_fn: Callable, *args: Any, **kwargs: Any) -> None:
         self.init_fn, self.update_fn, self.get_params_fn = optim_fn(*args, **kwargs)
 
-    def init(self, params: _Params) -> _IterOptState:
+    def init(self, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, Any]:
         opt_state = self.init_fn(params)
         return jnp.array(0), opt_state
 
-    def update(self, g: _Params, state: _IterOptState) -> _IterOptState:
+    def update(
+        self, g: Dict[str, jnp.ndarray], state: Tuple[jnp.ndarray, Any]
+    ) -> Tuple[jnp.ndarray, Any]:
         i, opt_state = state
         opt_state = self.update_fn(i, g, opt_state)
         return i + 1, opt_state
 
-    def eval_and_update(self, fn: Callable, state: _IterOptState) -> _IterOptState:
+    def eval_and_update(
+        self, fn: Callable, state: Tuple[jnp.ndarray, Any]
+    ) -> Tuple[jnp.ndarray, Any]:
         params = self.get_params(state)
         out, grads = value_and_grad(fn)(params)
         return out, self.update(grads, state)
 
-    def get_params(self, state: _IterOptState) -> _Params:
+    def get_params(self, state: Tuple[jnp.ndarray, Any]) -> Dict[str, jnp.ndarray]:
         _, opt_state = state
         return self.get_params_fn(opt_state)
 
@@ -542,8 +542,8 @@ class SVI:
             *args, **kwargs, **self.static_kwargs
         )
 
-        params = {}
-        inv_transforms = {}
+        params: Dict[str, jnp.ndarray] = {}
+        inv_transforms: Dict[str, Transform] = {}
         for site in list(model_trace.values()) + list(guide_trace.values()):
             if site["type"] == "param":
                 constraint = site["kwargs"].pop("constraint", constraints.real)
@@ -562,8 +562,15 @@ class SVI:
 
         rng_key, rng_key_step = random.split(svi_state.rng_key)
         loss_fn = partial(
-            _apply_loss_fn, self.loss.loss, rng_key_step, self.constrain_fn, self.model,
-            self.guide, args, kwargs, self.static_kwargs
+            _apply_loss_fn,
+            self.loss.loss,
+            rng_key_step,
+            self.constrain_fn,
+            self.model,
+            self.guide,
+            args,
+            kwargs,
+            self.static_kwargs,
         )
         loss_val, optim_state = self.optim.eval_and_update(loss_fn, svi_state.optim_state)
 
