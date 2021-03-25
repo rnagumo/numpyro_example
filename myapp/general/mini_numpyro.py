@@ -171,7 +171,7 @@ class plate(Messanger):
         super().__init__()
 
     @staticmethod
-    def _get_batch_shape(cond_indep_stack: jnp.ndarray) -> Tuple[int, ...]:
+    def _get_batch_shape(cond_indep_stack: List[CondIndepStackFrame]) -> Tuple[int, ...]:
         n_dims = max(-f.dim for f in cond_indep_stack)
         batch_shape = [1] * n_dims
         for f in cond_indep_stack:
@@ -296,7 +296,10 @@ def is_identically_one(x: Any) -> bool:
 
 
 def log_density(
-    model: Callable, model_args: Tuple[Any, ...], model_kwargs: Dict[str, Any], params: jnp.ndarray
+    model: Callable,
+    model_args: Tuple[Any, ...],
+    model_kwargs: Dict[str, Any],
+    params: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, OrderedDict]:
     # https://github.com/pyro-ppl/numpyro/blob/master/numpyro/infer/util.py#L36
 
@@ -531,7 +534,7 @@ class SVI:
         self.optim = optim
         self.loss = loss
         self.static_kwargs = static_kwargs
-        self.constrain_fn = None
+        self.constrain_fn: Optional[Callable] = None
 
     def init(self, rng_key: jnp.ndarray, *args: Any, **kwargs: Any) -> SVIState:
         rng_key, model_seed, guide_seed = random.split(rng_key, 3)
