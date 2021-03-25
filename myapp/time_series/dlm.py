@@ -32,7 +32,8 @@ def model(
     sigma = numpyro.sample("sigma", dist.LogNormal(-20 * jnp.ones(x_dim), 20 * jnp.ones(x_dim)))
 
     def transition_fn(
-        carry: Tuple[jnp.ndarray, jnp.ndarray], t: jnp.ndarray,
+        carry: Tuple[jnp.ndarray, jnp.ndarray],
+        t: jnp.ndarray,
     ) -> Tuple[Tuple[jnp.ndarray, jnp.ndarray], jnp.ndarray]:
 
         z_prev, w_prev = carry
