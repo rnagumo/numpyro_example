@@ -38,8 +38,8 @@ def model(
     if x is not None:
         seq_len, batch, x_dim = x.shape
 
-    trans = numpyro.param("trans", 0.0)
-    emit = numpyro.param("emit", 0.0)
+    trans = numpyro.param("trans", 1.0)
+    emit = numpyro.param("emit", 1.0)
 
     def transition_fn(
         carry: Tuple[jnp.ndarray], t: jnp.ndarray
@@ -66,7 +66,7 @@ def guide(
     if x is not None:
         *_, x_dim = x.shape
 
-    phi = numpyro.param("phi", jnp.zeros(x_dim))
+    phi = numpyro.param("phi", jnp.ones(x_dim))
     sigma = numpyro.param("sigma", jnp.ones(x_dim), constraint=constraints.positive)
     numpyro.sample("z", dist.Normal(x * phi, sigma))
 
@@ -115,9 +115,9 @@ def _save_results(
     plt.close()
 
     plt.figure(figsize=(12, 6))
-    plt.plot(svi_result.losses)
-    plt.xlabel("Loss")
-    plt.ylabel("Steps")
+    plt.plot(svi_result.losses[::100])
+    plt.xlabel("Steps")
+    plt.ylabel("Loss")
     plt.tight_layout()
     plt.savefig(root / "losses.png")
     plt.close()
@@ -147,7 +147,7 @@ def main() -> None:
     # Inference
     adam = optim.Adam(0.00001)
     svi = infer.SVI(model, guide, adam, infer.Trace_ELBO())
-    svi_result = svi.run(rng_key_infer, 10000, x)
+    svi_result = svi.run(rng_key_infer, 100000, x)
 
     # Posterior prediction
     predictive = infer.Predictive(model, params=svi_result.params, num_samples=10)
