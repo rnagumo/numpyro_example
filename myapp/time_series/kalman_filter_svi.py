@@ -15,6 +15,7 @@ from jax import random
 from numpyro import diagnostics, infer, optim
 from numpyro.contrib.control_flow import scan
 from numpyro.distributions import constraints
+from numpyro.infer.svi import SVIRunResult
 
 
 def model(
@@ -36,14 +37,6 @@ def model(
 
     if x is not None:
         seq_len, batch, x_dim = x.shape
-
-    # trans_mu = numpyro.param("trans_mu", 0.0)
-    # trans_var = numpyro.param("trans_var", 10.0, constraint=constraints.positive)
-    # emit_mu = numpyro.param("emit_mu", 0.0)
-    # emit_var = numpyro.param("emit_var", 10.0, constraint=constraints.positive)
-
-    # trans = numpyro.sample("trans", dist.Normal(trans_mu, 1.0))
-    # emit = numpyro.sample("emit", dist.Normal(0.0, 1.0))
 
     trans = numpyro.param("trans", 0.0)
     emit = numpyro.param("emit", 0.0)
@@ -73,12 +66,8 @@ def guide(
     if x is not None:
         *_, x_dim = x.shape
 
-    phi_mu = numpyro.param("phi_mu", jnp.zeros(x_dim))
-    phi_std = numpyro.param("phi_std", jnp.ones(x_dim), constraint=constraints.positive)
-    sigma_mu = numpyro.param("sigma_mu", jnp.ones(x_dim), constraint=constraints.positive)
-
-    phi = numpyro.sample("phi", dist.Normal(phi_mu, phi_std))
-    sigma = numpyro.sample("sigma", dist.HalfCauchy(sigma_mu))
+    phi = numpyro.param("phi", jnp.zeros(x_dim))
+    sigma = numpyro.param("sigma", jnp.ones(x_dim), constraint=constraints.positive)
     numpyro.sample("z", dist.Normal(x * phi, sigma))
 
 
@@ -86,6 +75,7 @@ def _save_results(
     x: jnp.ndarray,
     posterior_params: Dict[str, jnp.ndarray],
     posterior_predictive: Dict[str, jnp.ndarray],
+    svi_result: SVIRunResult,
 ) -> None:
 
     root = pathlib.Path("./data/kalman_svi")
@@ -124,6 +114,14 @@ def _save_results(
     plt.savefig(root / "kalman.png")
     plt.close()
 
+    plt.figure(figsize=(12, 6))
+    plt.plot(svi_result.losses)
+    plt.xlabel("Loss")
+    plt.ylabel("Steps")
+    plt.tight_layout()
+    plt.savefig(root / "losses.png")
+    plt.close()
+
 
 def main() -> None:
 
@@ -149,13 +147,13 @@ def main() -> None:
     # Inference
     adam = optim.Adam(0.00001)
     svi = infer.SVI(model, guide, adam, infer.Trace_ELBO())
-    svi_result = svi.run(rng_key_infer, 100, x)
+    svi_result = svi.run(rng_key_infer, 10000, x)
 
     # Posterior prediction
     predictive = infer.Predictive(model, params=svi_result.params, num_samples=10)
     posterior_predictive = predictive(rng_key_posterior, None, *x.shape, future_steps=10)
 
-    _save_results(x, svi_result.params, posterior_predictive)
+    _save_results(x, svi_result.params, posterior_predictive, svi_result)
 
 
 if __name__ == "__main__":
