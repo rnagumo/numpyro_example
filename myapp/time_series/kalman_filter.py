@@ -12,21 +12,24 @@ from numpyro.contrib.control_flow import scan
 
 
 def model(
-    x: Optional[jnp.ndarray] = None, future_steps: int = 0, batch: int = 0, x_dim: int = 1
+    x: Optional[jnp.ndarray] = None,
+    seq_len: int = 0,
+    batch: int = 0,
+    x_dim: int = 1,
+    future_steps: int = 0,
 ) -> None:
     """Simple Kalman filter model (random walk).
 
     Args:
         x: **Batch-first** data, `shape = (seq_len, batch, data_dim)`.
-        future_steps: Forecasting time steps.
+        seq_len: Length of sequence.
         batch: Batch size for prior sampling.
         x_dim: Dimension of data for prior sampling.
+        future_steps: Forecasting time steps.
     """
 
     if x is not None:
         seq_len, batch, x_dim = x.shape
-    else:
-        seq_len = 0
 
     trans = numpyro.sample("trans", dist.Normal(0, 1))
     emit = numpyro.sample("emit", dist.Normal(0, 1))
@@ -38,7 +41,6 @@ def model(
         z_prev, *_ = carry
         z = numpyro.sample("z", dist.Normal(trans * z_prev, 1))
         numpyro.sample("x", dist.Normal(emit * z, 1))
-        numpyro.sample("x_sample", dist.Normal(emit * z, 1))
         return (z,), None
 
     z_init = jnp.zeros((batch, x_dim))
@@ -60,12 +62,13 @@ def _save_results(
     jnp.savez(root / "posterior_samples.npz", **posterior_samples)
     jnp.savez(root / "posterior_predictive.npz", **posterior_predictive)
 
-    x_pred_trn = posterior_samples["x_sample"]
-    x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
-    len_train = x_pred_trn.shape[1]
+    len_train = x.shape[0]
 
+    x_pred_trn = posterior_predictive["x"][:, :len_train]
+    x_hpdi_trn = diagnostics.hpdi(x_pred_trn)
     x_pred_tst = posterior_predictive["x"][:, len_train:]
     x_hpdi_tst = diagnostics.hpdi(x_pred_tst)
+
     len_test = x_pred_tst.shape[1]
 
     prop_cycle = plt.rcParams["axes.prop_cycle"]
@@ -119,7 +122,7 @@ def main() -> None:
 
     # Posterior prediction
     predictive = infer.Predictive(model, posterior_samples=posterior_samples)
-    posterior_predictive = predictive(rng_key_posterior, x, future_steps=10)
+    posterior_predictive = predictive(rng_key_posterior, None, *x.shape, 10)
 
     _save_results(x, prior_samples, posterior_samples, posterior_predictive)
 
